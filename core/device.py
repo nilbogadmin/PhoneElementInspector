@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 
 from .hierarchy import parse_hierarchy_xml, load_hierarchy_from_file
 from .element import UIElement
+from .paths import resource_dir
 
 
 class DeviceConnector:
@@ -180,7 +181,7 @@ class DeviceConnector:
             return None
 
     def _load_demo(self) -> str:
-        demo_dir = Path(__file__).parent.parent / "demo"
+        demo_dir = resource_dir() / "demo"
         xml_path = demo_dir / "sample_hierarchy.xml"
         img_path = demo_dir / "sample_screenshot.png"
         if not xml_path.exists():
