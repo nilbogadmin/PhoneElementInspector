@@ -454,15 +454,19 @@ class CompactController(ctk.CTk):
                 bg.bind("<Button-1>", forward)
 
     def _display_scales(self, root: UIElement):
-        """Map the dump onto the screenshot using the root box, not a stray node."""
-        raw = getattr(root, "_raw_bounds", None) or root.bounds
-        rw = max(1, int(raw[2] - raw[0]))
-        rh = max(1, int(raw[3] - raw[1]))
+        """One scale for both axes, so a short button is never stretched tall."""
         full = getattr(self.device, "display_full_size", None) or (0, 0)
-        if full[0] > 1 and full[1] > 1 and rw > 50 and rh > 50:
-            return (full[0] / float(rw), full[1] / float(rh))
-        scale = float(getattr(self.device, "px_scale", 1) or 1)
-        return (scale, scale)
+        capture = getattr(self.device, "capture_size", None) or full
+        px = float(getattr(self.device, "px_scale", 1) or 1)
+        space_w = 0
+        for el in flatten_elements(root):
+            raw = getattr(el, "_raw_bounds", None) or el.bounds
+            space_w = max(space_w, int(raw[2]))
+        cap_w = int(capture[0] or full[0] or 0)
+        if space_w > 50 and cap_w > 50:
+            scale = px * (cap_w / float(space_w))
+            return (scale, scale)
+        return (px, px)
 
     def _apply_hierarchy(self, root: UIElement):
         sig = self._tree_sig(root)
@@ -487,6 +491,8 @@ class CompactController(ctk.CTk):
                 int(round(l * sx)), int(round(t * sy)),
                 int(round(r * sx)), int(round(b * sy)),
             )
+            if not el.clickable:
+                continue
             if el.bounds[1] >= view_h:
                 continue
             key = (

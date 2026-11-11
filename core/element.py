@@ -161,40 +161,27 @@ def flatten_elements(root: UIElement) -> List[UIElement]:
 
 
 def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int = 0):
-    """Smallest element under the point.
+    """Smallest clickable element whose own box contains the point.
 
-    The full-screen frame is never chosen. A near miss still hits the closest
-    real control, so a few pixels of scale error does not drop the click.
+    Non-clickable nodes are ignored. The point has to sit inside the real
+    border. Nothing nearby is stretched or borrowed to fill the click.
     """
     best = None
-    best_key = None
-    reach = max(int(slop), 18)
-
-    def outer(el, w, h) -> bool:
-        l, t, r, b = el.bounds
-        return (
-            l <= img_w * 0.02
-            and t <= img_h * 0.02
-            and w >= img_w * 0.96
-            and h >= img_h * 0.90
-        )
+    best_area = None
+    pad = max(0, int(slop))
 
     for el in elements:
-        if getattr(el, "ignored", False):
+        if getattr(el, "ignored", False) or not getattr(el, "clickable", False):
             continue
         l, t, r, b = el.bounds
         w = r - l
         h = b - t
-        if w < 2 or h < 2 or outer(el, w, h):
+        if w < 2 or h < 2:
             continue
-        dx = 0 if l <= ix <= r else (l - ix if ix < l else ix - r)
-        dy = 0 if t <= iy <= b else (t - iy if iy < t else iy - b)
-        dist = (dx * dx + dy * dy) ** 0.5
-        inside = dist <= slop
-        if not inside and dist > reach:
+        if ix < l - pad or ix > r + pad or iy < t - pad or iy > b + pad:
             continue
-        key = (0 if inside else dist, w * h)
-        if best is None or key < best_key:
+        area = w * h
+        if best is None or area < best_area:
             best = el
-            best_key = key
+            best_area = area
     return best

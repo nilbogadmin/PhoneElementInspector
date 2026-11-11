@@ -242,7 +242,7 @@ class PhoneView(ctk.CTkFrame):
         img_w, img_h = self.base_image.size
         if ix < -20 or iy < -20 or ix > img_w + 20 or iy > img_h + 20:
             return
-        slop = max(2, int(4 / max(self.scale, 0.15)))
+        slop = 2
         chosen = pick_element(self.elements, ix, iy, img_w, img_h, slop=slop)
         if chosen is None:
             return
