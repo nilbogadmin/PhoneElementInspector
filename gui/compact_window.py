@@ -123,7 +123,6 @@ class CompactController(ctk.CTk):
         )
         self.phone_view.pack(fill="both", expand=True, padx=6, pady=6)
         self.phone_view.set_outline_mode(show_all=False, only_tagged=True)
-        self._bind_mirror_clicks()
 
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
@@ -330,6 +329,7 @@ class CompactController(ctk.CTk):
             self.phone_view.set_frame(img)
         if self.device.last_hierarchy is not None:
             self._apply_hierarchy(self.device.last_hierarchy)
+        self._raise_controls()
 
     def _start_live(self):
         self.device.start_live(self._on_live_frame)
@@ -357,11 +357,13 @@ class CompactController(ctk.CTk):
         if img is None:
             return
         self.phone_view.set_frame(img)
-        scales = None
-        if self.root_element is not None:
+        if self.root_element is None and self.device.last_hierarchy is not None:
+            self._apply_hierarchy(self.device.last_hierarchy)
+        elif self.root_element is not None:
             scales = self._display_scales(self.root_element)
-        if self.root_element is not None and scales != self._mapped_scale:
-            self._apply_hierarchy(self.root_element)
+            if scales != self._mapped_scale:
+                self._apply_hierarchy(self.root_element)
+        self._raise_controls()
 
     def _hier_tick(self):
         if (
@@ -437,6 +439,7 @@ class CompactController(ctk.CTk):
             self.phone_view.canvas.lift()
         except Exception:
             pass
+        self._bind_mirror_clicks()
 
     def _keep_clicks_on_mirror(self):
         self._raise_controls()
@@ -444,11 +447,18 @@ class CompactController(ctk.CTk):
     def _bind_mirror_clicks(self):
         def forward(event):
             canvas = self.phone_view.canvas
-            event.x = event.x_root - canvas.winfo_rootx()
-            event.y = event.y_root - canvas.winfo_rooty()
+            try:
+                x = event.x_root - canvas.winfo_rootx()
+                y = event.y_root - canvas.winfo_rooty()
+            except Exception:
+                return
+            if x < 0 or y < 0 or x > canvas.winfo_width() or y > canvas.winfo_height():
+                return
+            event.x = x
+            event.y = y
             self.phone_view._on_press(event)
 
-        for frame in (self.mirror_frame, self.phone_view):
+        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header):
             bg = getattr(frame, "_canvas", None)
             if bg is not None and bg is not self.phone_view.canvas:
                 bg.bind("<Button-1>", forward)

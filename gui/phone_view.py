@@ -216,8 +216,12 @@ class PhoneView(ctk.CTkFrame):
 
     def _event_to_img(self, event) -> Tuple[int, int]:
         """Map a click onto the picture that is actually drawn."""
-        x = float(self.canvas.canvasx(event.x))
-        y = float(self.canvas.canvasy(event.y))
+        try:
+            x = float(event.x_root - self.canvas.winfo_rootx())
+            y = float(event.y_root - self.canvas.winfo_rooty())
+        except Exception:
+            x = float(getattr(event, "x", 0))
+            y = float(getattr(event, "y", 0))
         if self._img_id is None or self.base_image is None or self.photo is None:
             return self._canvas_to_img(int(x), int(y))
         coords = self.canvas.coords(self._img_id)
