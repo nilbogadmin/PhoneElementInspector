@@ -211,7 +211,7 @@ class DeviceConnector:
         self.capture_size = (w, h)
         self.device_px = (w, h)
         self.screen_size = (w, h)
-        scale = 1.0 if w <= 400 else 400 / float(w)
+        scale = 1.0 if w <= 880 else 880 / float(w)
         self.px_scale = scale
         if scale != 1.0:
             img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BILINEAR)

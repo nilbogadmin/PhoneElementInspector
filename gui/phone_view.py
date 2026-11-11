@@ -117,7 +117,7 @@ class PhoneView(ctk.CTkFrame):
             canvas_w, canvas_h = 280, 320
         img_w, img_h = self.base_image.size
         pad = 4
-        self.scale = max(0.15, min((canvas_w - pad) / img_w, (canvas_h - pad) / img_h, 1.0))
+        self.scale = max(0.15, min((canvas_w - pad) / img_w, (canvas_h - pad) / img_h))
         new_w = int(img_w * self.scale)
         new_h = int(img_h * self.scale)
         self.offset_x = max(0, (canvas_w - new_w) // 2)

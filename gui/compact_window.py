@@ -15,7 +15,7 @@ from typing import Optional
 from core.device import DeviceConnector
 from core.tagger import Tagger
 from core.rules import RulesEngine
-from core.element import UIElement, flatten_elements, fit_scales
+from core.element import UIElement, flatten_elements
 from core.paths import app_dir
 from gui.phone_view import PhoneView
 
@@ -28,10 +28,10 @@ RED = "#ff453a"
 SECONDARY = "#98989f"
 LABEL = "#ffffff"
 
-BAR_W = 300
-BAR_H = 48
-DROP_H = 36
-HEAD_H = 30
+BAR_W = 900
+BAR_H = 84
+DROP_H = 48
+HEAD_H = 42
 PHONE_ASPECT = (19.5 / 9) * 0.5   # half height for top-half only
 
 
@@ -86,8 +86,8 @@ class CompactController(ctk.CTk):
         self._bind_drag()
 
     def _build_ui(self):
-        btn_font = ctk.CTkFont(family="Poppins Condensed", size=11, weight="bold")
-        menu_font = ctk.CTkFont(family="Poppins Condensed", size=12, weight="bold")
+        btn_font = ctk.CTkFont(family="Poppins Condensed", size=22, weight="bold")
+        menu_font = ctk.CTkFont(family="Poppins Condensed", size=18, weight="bold")
 
         self.header = ctk.CTkFrame(self, height=HEAD_H, fg_color=SURFACE, corner_radius=12)
         self.header.pack(fill="x", side="top", pady=(0, 4))
@@ -95,7 +95,7 @@ class CompactController(ctk.CTk):
         self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
         self.drag_zone.pack(side="left", fill="both", expand=True)
         self.close_btn = ctk.CTkButton(
-            self.header, text="X", width=26, height=22, corner_radius=6,
+            self.header, text="X", width=54, height=32, corner_radius=8,
             fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
         )
         self.close_btn.pack(side="right", padx=6, pady=4)
@@ -106,7 +106,7 @@ class CompactController(ctk.CTk):
             self.mirror_frame,
             values=["WAITING"],
             command=self._on_device_pick,
-            height=28,
+            height=40,
             fg_color=SURFACE2,
             button_color=SURFACE2,
             button_hover_color="#3a3a3c",
@@ -127,7 +127,7 @@ class CompactController(ctk.CTk):
 
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
-            font=ctk.CTkFont(family="Poppins Condensed", size=13, weight="bold"),
+            font=ctk.CTkFont(family="Poppins Condensed", size=20, weight="bold"),
             fg_color="#1c1c1e", corner_radius=6,
         )
 
@@ -138,24 +138,24 @@ class CompactController(ctk.CTk):
         self._bar_inner = ctk.CTkFrame(self.bar, fg_color="transparent")
         self._bar_inner.pack(fill="both", expand=True, padx=8, pady=6)
 
-        btn_w, btn_h = 62, 26
+        btn_w, btn_h = 200, 60
         self.add_btn = ctk.CTkButton(
-            self._bar_inner, text="ADD", width=btn_w, height=btn_h, corner_radius=6,
+            self._bar_inner, text="ADD", width=btn_w, height=btn_h, corner_radius=10,
             fg_color=GREEN, hover_color="#28b34a",
             command=self._quick_rule, font=btn_font,
         )
-        self.add_btn.pack(side="left", padx=2)
+        self.add_btn.pack(side="left", padx=6)
 
         self.run_btn = ctk.CTkButton(
-            self._bar_inner, text="START", width=btn_w, height=btn_h, corner_radius=6,
+            self._bar_inner, text="START", width=btn_w, height=btn_h, corner_radius=10,
             fg_color=BLUE, hover_color="#0066cc",
             command=self._toggle_rules, font=btn_font,
         )
-        self.run_btn.pack(side="left", padx=2)
+        self.run_btn.pack(side="left", padx=6)
 
     def _window_height(self) -> int:
         mirror_h = int(BAR_W * PHONE_ASPECT)
-        return mirror_h + BAR_H + DROP_H + HEAD_H + 16
+        return mirror_h + BAR_H + DROP_H + HEAD_H + 28
 
     def _format_geo(self, x: int, y: int) -> str:
         """Fixed size. Negative coordinates must not become '+-10' or Tk throws."""
@@ -184,8 +184,9 @@ class CompactController(ctk.CTk):
         self.geometry(self._format_geo(x, y))
         self.mirror_on = True
         self.mirror_frame.pack(fill="both", expand=True, before=self.bar)
-        self._keep_clicks_on_mirror()
-        self.after(50, self._keep_clicks_on_mirror)
+        self._raise_controls()
+        self.after(50, self._raise_controls)
+        self.after(300, self._raise_controls)
         self._start_live()
 
     def _apply_geometry(self):
@@ -206,7 +207,7 @@ class CompactController(ctk.CTk):
         self._apply_geometry()
 
     def _bind_drag(self):
-        for widget in (self.header, self.drag_zone, self.bar, self._bar_inner):
+        for widget in (self.header, self.drag_zone):
             widget.bind("<Button-1>", self._start_drag)
             widget.bind("<B1-Motion>", self._do_drag)
 
@@ -417,9 +418,9 @@ class CompactController(ctk.CTk):
             )
         return digest.hexdigest()
 
-    def _keep_clicks_on_mirror(self):
-        """The rounded frame draws a canvas over the whole window. Keep it behind the mirror."""
-        for frame in (self, self.mirror_frame, self.phone_view):
+    def _raise_controls(self):
+        """Keep CTk's rounded canvases behind the mirror and the buttons."""
+        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header, self._bar_inner):
             bg = getattr(frame, "_canvas", None)
             if bg is None or bg is self.phone_view.canvas:
                 continue
@@ -427,10 +428,18 @@ class CompactController(ctk.CTk):
                 bg.lower()
             except Exception:
                 pass
+        for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
+            try:
+                widget.lift()
+            except Exception:
+                pass
         try:
             self.phone_view.canvas.lift()
         except Exception:
             pass
+
+    def _keep_clicks_on_mirror(self):
+        self._raise_controls()
 
     def _bind_mirror_clicks(self):
         def forward(event):
@@ -445,16 +454,15 @@ class CompactController(ctk.CTk):
                 bg.bind("<Button-1>", forward)
 
     def _display_scales(self, root: UIElement):
-        """Autodetect this phone's screenshot size vs its element coordinates."""
-        raw_root = getattr(root, "_raw_bounds", None) or root.bounds
-        raw_boxes = [
-            getattr(el, "_raw_bounds", None) or el.bounds
-            for el in flatten_elements(root)
-        ]
+        """Map the dump onto the screenshot using the root box, not a stray node."""
+        raw = getattr(root, "_raw_bounds", None) or root.bounds
+        rw = max(1, int(raw[2] - raw[0]))
+        rh = max(1, int(raw[3] - raw[1]))
         full = getattr(self.device, "display_full_size", None) or (0, 0)
-        capture = getattr(self.device, "capture_size", None) or full
-        wm = getattr(self.device, "wm_sizes", ()) or ()
-        return fit_scales(capture, full, raw_root, raw_boxes, wm)
+        if full[0] > 1 and full[1] > 1 and rw > 50 and rh > 50:
+            return (full[0] / float(rw), full[1] / float(rh))
+        scale = float(getattr(self.device, "px_scale", 1) or 1)
+        return (scale, scale)
 
     def _apply_hierarchy(self, root: UIElement):
         sig = self._tree_sig(root)
