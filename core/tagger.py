@@ -85,68 +85,60 @@ class Tagger:
                 hit.notes = (self.tags.get(tag_name) or {}).get("notes", "")
 
     def find_for_click(self, root: UIElement, tag_name: str, family=None) -> Optional[UIElement]:
-        """Find this tag on a phone of the same model. Pixel boxes are not compared."""
-        from .match import same_family
+        """The added element only. Never a lookalike, and never the bottom half."""
+        from .match import same_family, in_top_half
 
         data = self.tags.get(tag_name) or {}
-        if not same_family(data.get("family"), family):
+        if not data or not same_family(data.get("family"), family):
             return None
         selector = dict(data.get("selector") or {})
         selector.pop("bounds", None)
-        els = [el for el in flatten_elements(root) if el.width > 1 and el.height > 1]
-        if not els:
-            return None
-        max_r = max(el.bounds[2] for el in els) or 1
-        max_b = max(el.bounds[3] for el in els) or 1
-        els = [
-            el for el in els
-            if not (
-                el.bounds[0] <= 2 and el.bounds[1] <= 2
-                and el.width >= max_r * 0.96 and el.height >= max_b * 0.90
-            )
-        ]
         rid = selector.get("resource_id") or ""
         text = selector.get("text") or ""
         desc = selector.get("content_desc") or ""
         cls = selector.get("class_name") or ""
-        pool = els
-        if rid:
-            id_hits = [el for el in pool if el.resource_id == rid]
-            if id_hits:
-                pool = id_hits
-            else:
-                pool = [
-                    el for el in pool
-                    if (text and el.text == text) or (desc and el.content_desc == desc)
-                ]
-        else:
-            pool = [
-                el for el in pool
-                if (not cls or el.class_name == cls)
-                and (not text or el.text == text)
-                and (not desc or el.content_desc == desc)
-                and (text or desc or cls)
-            ]
+        # A class name alone matches half the screen. Require a real identity.
+        if not (rid or text or desc):
+            return None
+        els = flatten_elements(root)
+        if not els:
+            return None
+        max_r = max(el.bounds[2] for el in els) or 1
+        max_b = max(el.bounds[3] for el in els) or 1
+
+        def same(el: UIElement) -> bool:
+            if not el.clickable or el.width < 2 or el.height < 2:
+                return False
+            if not in_top_half(el, root):
+                return False
+            if rid and el.resource_id != rid:
+                return False
+            if text and el.text != text:
+                return False
+            if desc and el.content_desc != desc:
+                return False
+            if cls and el.class_name != cls:
+                return False
+            return True
+
+        pool = [el for el in els if same(el)]
         if not pool:
             return None
-        if text:
-            named = [el for el in pool if el.text == text]
-            if len(named) == 1:
-                return named[0]
-            if named and not rid:
-                pool = named
-        if len(pool) == 1:
-            return pool[0]
         norm = data.get("norm")
         if norm and len(norm) == 2:
             nx, ny = float(norm[0]), float(norm[1])
 
             def dist(el: UIElement) -> float:
                 cx, cy = el.center
-                return (cx / max_r - nx) ** 2 + (cy / max_b - ny) ** 2
+                return ((cx / max_r - nx) ** 2 + (cy / max_b - ny) ** 2) ** 0.5
 
-            return min(pool, key=dist)
-        return min(pool, key=lambda el: el.width * el.height)
+            near = [el for el in pool if dist(el) <= 0.08]
+            if not near:
+                return None
+            return min(near, key=dist)
+        if len(pool) == 1:
+            return pool[0]
+        return None
 
     def find_by_tag(self, root: UIElement, tag_name: str) -> Optional[UIElement]:
         for el in flatten_elements(root):

@@ -174,10 +174,10 @@ class PhoneView(ctk.CTkFrame):
             l, t, r, b = el.bounds
             if r <= l or b <= t:
                 continue
-            color = "#5abeff" if tagged else "#ffaf46"
+            color = "#30d158" if tagged else "#ffaf46"
             self._tag_bounds.append((l, t, r, b))
             self._tag_ids.append(self.canvas.create_rectangle(
-                0, 0, 0, 0, outline=color, width=2
+                0, 0, 0, 0, outline=color, width=3
             ))
         self._place_tag_boxes()
         self._draw_locked_outline()

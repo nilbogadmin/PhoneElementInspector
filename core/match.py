@@ -50,16 +50,13 @@ def family_aliases(*parts: str) -> List[str]:
 
 
 def same_family(rule_family, device_family) -> bool:
-    """A rule with a family only runs on phones that share one alias.
+    """A rule only runs on phones of the same model.
 
-    A rule saved before families existed still runs everywhere.
-    An unidentified phone does not inherit a family rule.
+    No family means it is not allowed to run on every connected phone.
     """
     rule = _as_set(rule_family)
     device = _as_set(device_family)
-    if not rule:
-        return True
-    if not device:
+    if not rule or not device:
         return False
     return bool(rule & device)
 
@@ -98,11 +95,28 @@ def tap_xy(el: UIElement, root: UIElement, wm_sizes: Sequence[Tuple[int, int]] =
     return int(round(cx / hw * tw)), int(round(cy / hh * th))
 
 
+def screen_size(root: UIElement) -> Tuple[int, int]:
+    els = flatten_elements(root)
+    width = max((e.bounds[2] for e in els), default=1) or 1
+    height = max((e.bounds[3] for e in els), default=1) or 1
+    return width, height
+
+
+def in_top_half(el: UIElement, root: UIElement) -> bool:
+    """The bottom half of the phone is never a click target."""
+    _, height = screen_size(root)
+    cy = (el.bounds[1] + el.bounds[3]) / 2.0
+    return cy < height * 0.5
+
+
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=()) -> List[Tuple[int, int]]:
-    """Taps this phone should perform. Other model years are skipped."""
+    """Taps for elements the user added. Nothing else, and never the bottom half."""
     taps: List[Tuple[int, int]] = []
     for rule in rules:
         if not rule.get("enabled", True):
+            continue
+        actions = rule.get("actions") or []
+        if not any(a.get("type") == "click" for a in actions):
             continue
         if not same_family(rule.get("family"), family):
             continue
@@ -110,7 +124,7 @@ def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm
             if cond.get("type") != "element_visible":
                 continue
             el = tagger.find_for_click(root, cond.get("tag"), family=family)
-            if el is None:
+            if el is None or not in_top_half(el, root):
                 continue
             taps.append(tap_xy(el, root, wm_sizes))
     return taps
