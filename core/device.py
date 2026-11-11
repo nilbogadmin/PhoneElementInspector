@@ -21,6 +21,10 @@ class DeviceConnector:
         self.screen_size: Tuple[int, int] = (1080, 2400)
         self.serial: Optional[str] = None
         self.px_scale = 1.0
+        self.display_full_size: Tuple[int, int] = (0, 0)
+        self.capture_size: Tuple[int, int] = (0, 0)
+        self.wm_sizes: Tuple[Tuple[int, int], ...] = ()
+        self._wm_cache: dict = {}
         self.device_px: Tuple[int, int] = (1080, 2400)
         self._model_cache: dict = {}
         self._cap_running = False
@@ -156,6 +160,7 @@ class DeviceConnector:
             img = self._adb_screencap()
             if img is not None:
                 self._set_display(img)
+            self._probe_wm()
             return "Refreshed"
         except Exception as e:
             return f"Refresh failed: {e}"
@@ -163,6 +168,7 @@ class DeviceConnector:
     def _set_display(self, img: Image.Image) -> None:
         """Keep one small top-half frame. Hierarchy stays in device pixels."""
         w, h = img.size
+        self.capture_size = (w, h)
         self.device_px = (w, h)
         self.screen_size = (w, h)
         scale = 1.0 if w <= 400 else 400 / float(w)
@@ -170,8 +176,38 @@ class DeviceConnector:
         if scale != 1.0:
             img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BILINEAR)
         dw, dh = img.size
+        self.display_full_size = (dw, dh)
         top = max(1, dh // 2)
         self.last_screenshot = img.crop((0, 0, dw, top)).convert("RGB")
+
+    def _probe_wm(self) -> None:
+        """Read `wm size` once per phone. Physical and override can differ."""
+        if self.demo_mode or not self.serial:
+            return
+        cached = self._wm_cache.get(self.serial)
+        if cached is not None:
+            self.wm_sizes = cached
+            return
+        sizes: Tuple[Tuple[int, int], ...] = ()
+        try:
+            import adbutils
+            import re
+            text = adbutils.adb.device(serial=self.serial).shell("wm size") or ""
+            found = []
+            for line in str(text).splitlines():
+                m = re.search(r"(\d+)\s*x\s*(\d+)", line)
+                if not m:
+                    continue
+                pair = (int(m.group(1)), int(m.group(2)))
+                if "override" in line.lower():
+                    found.insert(0, pair)
+                else:
+                    found.append(pair)
+            sizes = tuple(found)
+        except Exception:
+            sizes = ()
+        self._wm_cache[self.serial] = sizes
+        self.wm_sizes = sizes
 
     def _adb_screencap(self) -> Optional[Image.Image]:
         """Pure adb screencap into memory – no temp files."""

@@ -96,6 +96,62 @@ class UIElement:
         return True
 
 
+def fit_scales(capture_size, display_full, root_bounds, element_bounds, wm_sizes=()):
+    """Map hierarchy pixels onto the shrunken screenshot.
+
+    The screenshot and the UI dump are not always the same resolution.
+    Moto G (2024) is 720x1612 and Moto G (2025) is 720x1604, and `wm size`
+    can add a second override. This picks the coordinate space that matches
+    the picture, then returns (scale_x, scale_y) into display_full.
+    """
+    cw, ch = int(capture_size[0] or 0), int(capture_size[1] or 0)
+    dw, dh = int(display_full[0] or 0), int(display_full[1] or 0)
+    if dw < 2 or dh < 2:
+        return (1.0, 1.0)
+
+    max_r = 0
+    max_b = 0
+    for b in element_bounds or ():
+        if not b:
+            continue
+        max_r = max(max_r, int(b[2]))
+        max_b = max(max_b, int(b[3]))
+    extent = (max_r, max_b)
+    if root_bounds:
+        root_wh = (
+            max(0, int(root_bounds[2] - root_bounds[0])),
+            max(0, int(root_bounds[3] - root_bounds[1])),
+        )
+    else:
+        root_wh = (0, 0)
+
+    cap_aspect = (cw / float(ch)) if ch else 0.45
+
+    def aspect_ok(w, h) -> bool:
+        if w < 80 or h < 80 or cap_aspect <= 0:
+            return False
+        return abs((w / float(h)) - cap_aspect) / cap_aspect <= 0.12
+
+    space = None
+    if aspect_ok(*extent):
+        space = extent
+    elif aspect_ok(*root_wh):
+        space = root_wh
+    else:
+        for wm in wm_sizes or ():
+            if wm and aspect_ok(int(wm[0]), int(wm[1])):
+                space = (int(wm[0]), int(wm[1]))
+                break
+    if space is None:
+        if extent[0] > 80 and extent[1] > 80:
+            space = extent
+        elif cw > 80 and ch > 80:
+            space = (cw, ch)
+        else:
+            space = (dw, dh)
+    return (dw / float(space[0]), dh / float(space[1]))
+
+
 def flatten_elements(root: UIElement) -> List[UIElement]:
     """Return a flat list of all elements (depth-first)."""
     result = [root]
@@ -105,26 +161,40 @@ def flatten_elements(root: UIElement) -> List[UIElement]:
 
 
 def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int = 0):
-    """Smallest element under the point. Skip the outer screen frame only."""
+    """Smallest element under the point.
+
+    The full-screen frame is never chosen. A near miss still hits the closest
+    real control, so a few pixels of scale error does not drop the click.
+    """
     best = None
-    best_area = None
-    limit_w = img_w * 0.96
-    limit_h = img_h * 0.96
+    best_key = None
+    reach = max(int(slop), 18)
+
+    def outer(el, w, h) -> bool:
+        l, t, r, b = el.bounds
+        return (
+            l <= img_w * 0.02
+            and t <= img_h * 0.02
+            and w >= img_w * 0.96
+            and h >= img_h * 0.90
+        )
+
     for el in elements:
         if getattr(el, "ignored", False):
             continue
         l, t, r, b = el.bounds
         w = r - l
         h = b - t
-        if w < 2 or h < 2:
+        if w < 2 or h < 2 or outer(el, w, h):
             continue
-        # The window itself. Full-width buttons and rows are still selectable.
-        if w >= limit_w and h >= limit_h:
+        dx = 0 if l <= ix <= r else (l - ix if ix < l else ix - r)
+        dy = 0 if t <= iy <= b else (t - iy if iy < t else iy - b)
+        dist = (dx * dx + dy * dy) ** 0.5
+        inside = dist <= slop
+        if not inside and dist > reach:
             continue
-        if ix < l - slop or ix > r + slop or iy < t - slop or iy > b + slop:
-            continue
-        area = w * h
-        if best is None or area < best_area:
+        key = (0 if inside else dist, w * h)
+        if best is None or key < best_key:
             best = el
-            best_area = area
+            best_key = key
     return best

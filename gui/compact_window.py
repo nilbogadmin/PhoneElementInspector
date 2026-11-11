@@ -15,7 +15,7 @@ from typing import Optional
 from core.device import DeviceConnector
 from core.tagger import Tagger
 from core.rules import RulesEngine
-from core.element import UIElement, flatten_elements
+from core.element import UIElement, flatten_elements, fit_scales
 from core.paths import app_dir
 from gui.phone_view import PhoneView
 
@@ -123,6 +123,7 @@ class CompactController(ctk.CTk):
         )
         self.phone_view.pack(fill="both", expand=True, padx=6, pady=6)
         self.phone_view.set_outline_mode(show_all=False, only_tagged=True)
+        self._bind_mirror_clicks()
 
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
@@ -183,6 +184,8 @@ class CompactController(ctk.CTk):
         self.geometry(self._format_geo(x, y))
         self.mirror_on = True
         self.mirror_frame.pack(fill="both", expand=True, before=self.bar)
+        self._keep_clicks_on_mirror()
+        self.after(50, self._keep_clicks_on_mirror)
         self._start_live()
 
     def _apply_geometry(self):
@@ -294,6 +297,7 @@ class CompactController(ctk.CTk):
             return
         self._pause_hier = True
         self._tree_sig_val = None
+        self._mapped_scale = None
         self._xml_hash = None
         self.current_element = None
         self.phone_view.clear_selection()
@@ -352,8 +356,10 @@ class CompactController(ctk.CTk):
         if img is None:
             return
         self.phone_view.set_frame(img)
-        scale = float(getattr(self.device, "px_scale", 1) or 1)
-        if self.root_element is not None and scale != self._mapped_scale:
+        scales = None
+        if self.root_element is not None:
+            scales = self._display_scales(self.root_element)
+        if self.root_element is not None and scales != self._mapped_scale:
             self._apply_hierarchy(self.root_element)
 
     def _hier_tick(self):
@@ -411,13 +417,54 @@ class CompactController(ctk.CTk):
             )
         return digest.hexdigest()
 
+    def _keep_clicks_on_mirror(self):
+        """The rounded frame draws a canvas over the whole window. Keep it behind the mirror."""
+        for frame in (self, self.mirror_frame, self.phone_view):
+            bg = getattr(frame, "_canvas", None)
+            if bg is None or bg is self.phone_view.canvas:
+                continue
+            try:
+                bg.lower()
+            except Exception:
+                pass
+        try:
+            self.phone_view.canvas.lift()
+        except Exception:
+            pass
+
+    def _bind_mirror_clicks(self):
+        def forward(event):
+            canvas = self.phone_view.canvas
+            event.x = event.x_root - canvas.winfo_rootx()
+            event.y = event.y_root - canvas.winfo_rooty()
+            self.phone_view._on_press(event)
+
+        for frame in (self.mirror_frame, self.phone_view):
+            bg = getattr(frame, "_canvas", None)
+            if bg is not None and bg is not self.phone_view.canvas:
+                bg.bind("<Button-1>", forward)
+
+    def _display_scales(self, root: UIElement):
+        """Autodetect this phone's screenshot size vs its element coordinates."""
+        raw_root = getattr(root, "_raw_bounds", None) or root.bounds
+        raw_boxes = [
+            getattr(el, "_raw_bounds", None) or el.bounds
+            for el in flatten_elements(root)
+        ]
+        full = getattr(self.device, "display_full_size", None) or (0, 0)
+        capture = getattr(self.device, "capture_size", None) or full
+        wm = getattr(self.device, "wm_sizes", ()) or ()
+        return fit_scales(capture, full, raw_root, raw_boxes, wm)
+
     def _apply_hierarchy(self, root: UIElement):
         sig = self._tree_sig(root)
-        scale = float(getattr(self.device, "px_scale", 1) or 1)
-        if sig == self._tree_sig_val and scale == self._mapped_scale:
+        scales = self._display_scales(root)
+        if sig == self._tree_sig_val and scales == self._mapped_scale:
+            self._keep_clicks_on_mirror()
             return
         self._tree_sig_val = sig
-        self._mapped_scale = scale
+        self._mapped_scale = scales
+        sx, sy = scales
         view_h = 10 ** 9
         if self.device.last_screenshot is not None:
             view_h = self.device.last_screenshot.size[1]
@@ -429,7 +476,8 @@ class CompactController(ctk.CTk):
                 raw = el.bounds
             l, t, r, b = raw
             el.bounds = (
-                int(l * scale), int(t * scale), int(r * scale), int(b * scale)
+                int(round(l * sx)), int(round(t * sy)),
+                int(round(r * sx)), int(round(b * sy)),
             )
             if el.bounds[1] >= view_h:
                 continue
@@ -445,6 +493,7 @@ class CompactController(ctk.CTk):
         self.root_element = root
         self.tagger.apply_tags_to_tree(root)
         self.phone_view.set_elements(visible)
+        self._keep_clicks_on_mirror()
 
     def _on_element_selected(self, el: UIElement):
         self.current_element = el

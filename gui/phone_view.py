@@ -214,19 +214,40 @@ class PhoneView(ctk.CTkFrame):
     def _hit_handle(self, x: int, y: int) -> Optional[str]:
         return None
 
+    def _event_to_img(self, event) -> Tuple[int, int]:
+        """Map a click onto the picture that is actually drawn."""
+        x = float(self.canvas.canvasx(event.x))
+        y = float(self.canvas.canvasy(event.y))
+        if self._img_id is None or self.base_image is None or self.photo is None:
+            return self._canvas_to_img(int(x), int(y))
+        coords = self.canvas.coords(self._img_id)
+        if len(coords) < 2:
+            return self._canvas_to_img(int(x), int(y))
+        pw = max(1, int(self.photo.width()))
+        ph = max(1, int(self.photo.height()))
+        img_w, img_h = self.base_image.size
+        ix = (x - float(coords[0])) / pw * img_w
+        iy = (y - float(coords[1])) / ph * img_h
+        return int(round(ix)), int(round(iy))
+
     def _on_press(self, event):
         self._drag_handle = None
-        self.canvas.focus_set()
+        try:
+            self.canvas.focus_set()
+        except Exception:
+            pass
         if not self.base_image or not self.elements:
             return
-        ix, iy = self._canvas_to_img(event.x, event.y)
+        ix, iy = self._event_to_img(event)
         img_w, img_h = self.base_image.size
+        if ix < -20 or iy < -20 or ix > img_w + 20 or iy > img_h + 20:
+            return
         slop = max(2, int(4 / max(self.scale, 0.15)))
         chosen = pick_element(self.elements, ix, iy, img_w, img_h, slop=slop)
         if chosen is None:
             return
         self.selected = chosen
-        self.locked_bounds = chosen.bounds
+        self.locked_bounds = tuple(chosen.bounds)
         self._draw_locked_outline()
         if self.on_element_selected:
             self.on_element_selected(chosen)
