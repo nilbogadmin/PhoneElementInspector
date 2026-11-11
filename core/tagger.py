@@ -34,6 +34,9 @@ class Tagger:
         tag_name: str,
         element: UIElement,
         notes: str = "",
+        family=None,
+        norm=None,
+        screen=None,
     ) -> None:
         """Create or update a tag with the most precise selector possible."""
         # Prefer unique identifiers; fall back to bounds for exactness
@@ -44,16 +47,18 @@ class Tagger:
             selector["content_desc"] = element.content_desc
         if element.text:
             selector["text"] = element.text
-        if element.class_name:
-            selector["class_name"] = element.class_name
-        # Always include bounds so identical-looking elements stay distinct
-        selector["bounds"] = f"{element.bounds[0]},{element.bounds[1]},{element.bounds[2]},{element.bounds[3]}"
+        selector["class_name"] = element.class_name
+        # Bounds stay off the selector. Two phones of the same model are a few
+        # pixels apart, and an exact box would miss every one but the trainer.
 
         self.tags[tag_name] = {
             "selector": selector,
             "notes": notes,
             "bounds_example": list(element.bounds),
             "display_name": element.display_name,
+            "family": list(family) if family else [],
+            "norm": list(norm) if norm else None,
+            "screen": list(screen) if screen else None,
         }
         element.tag = tag_name
         self.save()
@@ -69,44 +74,79 @@ class Tagger:
     def list_tags(self) -> List[str]:
         return sorted(self.tags.keys())
 
-    def apply_tags_to_tree(self, root: UIElement) -> None:
-        """Walk the tree and attach existing tags to matching elements."""
+    def apply_tags_to_tree(self, root: UIElement, family=None) -> None:
+        """Attach tags that belong on this phone. Other model years stay off."""
         for el in flatten_elements(root):
-            for tag_name, data in self.tags.items():
-                selector = data.get("selector", {})
-                if el.matches_selector(selector):
-                    el.tag = tag_name
-                    el.notes = data.get("notes", "")
-                    break
+            el.tag = None
+        for tag_name in list(self.tags):
+            hit = self.find_for_click(root, tag_name, family=family)
+            if hit is not None:
+                hit.tag = tag_name
+                hit.notes = (self.tags.get(tag_name) or {}).get("notes", "")
 
-    def find_for_click(self, root: UIElement, tag_name: str) -> Optional[UIElement]:
-        """Match a tag on any device. Bounds are not required so other phones still hit."""
+    def find_for_click(self, root: UIElement, tag_name: str, family=None) -> Optional[UIElement]:
+        """Find this tag on a phone of the same model. Pixel boxes are not compared."""
+        from .match import same_family
+
         data = self.tags.get(tag_name) or {}
+        if not same_family(data.get("family"), family):
+            return None
         selector = dict(data.get("selector") or {})
         selector.pop("bounds", None)
-        if not any(selector.values()):
+        els = [el for el in flatten_elements(root) if el.width > 1 and el.height > 1]
+        if not els:
             return None
-        matches = [el for el in flatten_elements(root) if el.matches_selector(selector)]
-        # Drop full-screen borders
-        matches = [
-            el for el in matches
-            if el.width > 0 and el.height > 0
+        max_r = max(el.bounds[2] for el in els) or 1
+        max_b = max(el.bounds[3] for el in els) or 1
+        els = [
+            el for el in els
+            if not (
+                el.bounds[0] <= 2 and el.bounds[1] <= 2
+                and el.width >= max_r * 0.96 and el.height >= max_b * 0.90
+            )
         ]
-        if not matches:
+        rid = selector.get("resource_id") or ""
+        text = selector.get("text") or ""
+        desc = selector.get("content_desc") or ""
+        cls = selector.get("class_name") or ""
+        pool = els
+        if rid:
+            id_hits = [el for el in pool if el.resource_id == rid]
+            if id_hits:
+                pool = id_hits
+            else:
+                pool = [
+                    el for el in pool
+                    if (text and el.text == text) or (desc and el.content_desc == desc)
+                ]
+        else:
+            pool = [
+                el for el in pool
+                if (not cls or el.class_name == cls)
+                and (not text or el.text == text)
+                and (not desc or el.content_desc == desc)
+                and (text or desc or cls)
+            ]
+        if not pool:
             return None
-        if len(matches) == 1:
-            return matches[0]
+        if text:
+            named = [el for el in pool if el.text == text]
+            if len(named) == 1:
+                return named[0]
+            if named and not rid:
+                pool = named
+        if len(pool) == 1:
+            return pool[0]
         norm = data.get("norm")
-        all_els = flatten_elements(root)
-        max_r = max((e.bounds[2] for e in all_els), default=1) or 1
-        max_b = max((e.bounds[3] for e in all_els), default=1) or 1
         if norm and len(norm) == 2:
             nx, ny = float(norm[0]), float(norm[1])
+
             def dist(el: UIElement) -> float:
                 cx, cy = el.center
                 return (cx / max_r - nx) ** 2 + (cy / max_b - ny) ** 2
-            return min(matches, key=dist)
-        return min(matches, key=lambda el: el.width * el.height)
+
+            return min(pool, key=dist)
+        return min(pool, key=lambda el: el.width * el.height)
 
     def find_by_tag(self, root: UIElement, tag_name: str) -> Optional[UIElement]:
         for el in flatten_elements(root):

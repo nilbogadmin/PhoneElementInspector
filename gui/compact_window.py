@@ -491,7 +491,7 @@ class CompactController(ctk.CTk):
                 continue
             visible.append(el)
         self.root_element = root
-        self.tagger.apply_tags_to_tree(root)
+        self.tagger.apply_tags_to_tree(root, family=getattr(self.device, "family", None))
         self.phone_view.set_elements(visible)
         self._keep_clicks_on_mirror()
 
@@ -531,22 +531,31 @@ class CompactController(ctk.CTk):
             messagebox.showinfo("Add", "Select an element on the mirror first")
             return
         name = str(random.randint(1000, 9999))
-        self.tagger.add_tag(name, self.current_element)
+        family = list(getattr(self.device, "family", []) or [])
+        if self.device.serial and not family:
+            family = list(self.device.identity(self.device.serial).get("family") or [])
+            self.device.family = family
+        raw = getattr(self.current_element, "_raw_bounds", None) or self.current_element.bounds
+        root_raw = getattr(self.root_element, "_raw_bounds", None) if self.root_element else None
+        if root_raw:
+            sw, sh = max(int(root_raw[2]), 1), max(int(root_raw[3]), 1)
+        else:
+            cap = getattr(self.device, "capture_size", None) or (1, 1)
+            sw, sh = max(int(cap[0]), 1), max(int(cap[1]), 1)
+        norm = [
+            ((raw[0] + raw[2]) / 2) / sw,
+            ((raw[1] + raw[3]) / 2) / sh,
+        ]
+        self.tagger.add_tag(
+            name, self.current_element, family=family, norm=norm, screen=[sw, sh]
+        )
         self.current_element.tag = name
-        img = self.phone_view.base_image
-        if img is not None:
-            iw, ih = img.size
-            l, t, r, b = self.current_element.bounds
-            self.tagger.tags[name]["norm"] = [
-                ((l + r) / 2) / max(iw, 1),
-                ((t + b) / 2) / max(ih * 2, 1),
-            ]
-            self.tagger.save()
         self.phone_view.set_selected(self.current_element)
         self.phone_view._rebuild_tag_boxes()
         self.rules.add_rule({
             "name": f"Click {name}",
             "enabled": True,
+            "family": family,
             "conditions": [{"type": "element_visible", "tag": name}],
             "actions": [{"type": "click", "tag": name}],
         })
@@ -628,18 +637,10 @@ class CompactController(ctk.CTk):
                 self._u2_cache.pop(serial, None)
             return 0
         root = parse_hierarchy_xml(xml)
-        taps = []
-        for rule in list(self.rules.rules):
-            if not rule.get("enabled", True):
-                continue
-            for cond in rule.get("conditions", []):
-                if cond.get("type") != "element_visible":
-                    continue
-                el = self.tagger.find_for_click(root, cond.get("tag"))
-                if el is None:
-                    continue
-                x, y = el.center
-                taps.append((int(x), int(y)))
+        from core.match import clicks_for_device
+        family = self.device.identity(serial).get("family") or []
+        wm = self.device.wm_for(serial)
+        taps = clicks_for_device(self.tagger, self.rules.rules, root, family, wm)
         for x, y in taps:
             try:
                 d.shell(f"input tap {x} {y}")

@@ -27,6 +27,8 @@ class DeviceConnector:
         self._wm_cache: dict = {}
         self.device_px: Tuple[int, int] = (1080, 2400)
         self._model_cache: dict = {}
+        self._identity: dict = {}
+        self.family: list = []
         self._cap_running = False
         self._cap_thread = None
         self._frame_callback = None
@@ -88,14 +90,52 @@ class DeviceConnector:
         rows = []
         for d in adbutils.adb.device_list():
             serial = d.serial
-            if serial not in self._model_cache:
-                try:
-                    model = (d.shell("getprop ro.product.model") or "").strip()
-                except Exception:
-                    model = ""
-                self._model_cache[serial] = model or serial
-            rows.append((serial, self._model_cache[serial]))
+            ident = self.identity(serial)
+            rows.append((serial, ident.get("label") or serial))
         return rows
+
+    def identity(self, serial: Optional[str] = None) -> dict:
+        """Marketing name plus the aliases shared by every phone of that model."""
+        from .match import family_aliases
+
+        serial = serial or self.serial
+        if not serial:
+            return {"family": [], "label": "Android"}
+        cached = self._identity.get(serial)
+        if cached is not None:
+            return cached
+        info = {"family": [], "label": serial}
+        try:
+            import adbutils
+            text = adbutils.adb.device(serial=serial).shell(
+                "echo MODEL=$(getprop ro.product.model); "
+                "echo MARKET=$(getprop ro.product.marketname); "
+                "echo DEVICE=$(getprop ro.product.device); "
+                "echo NAME=$(getprop ro.product.name)"
+            ) or ""
+            props = {}
+            for line in str(text).splitlines():
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                props[key.strip()] = value.strip()
+            parts = [
+                props.get("MARKET", ""),
+                props.get("MODEL", ""),
+                props.get("NAME", ""),
+                props.get("DEVICE", ""),
+            ]
+            info = {
+                "family": family_aliases(*parts),
+                "label": props.get("MARKET") or props.get("MODEL") or serial,
+            }
+        except Exception:
+            info = {"family": [], "label": serial}
+        self._identity[serial] = info
+        self._model_cache[serial] = info["label"]
+        if serial == self.serial:
+            self.family = list(info["family"])
+        return info
 
     def select_serial(self, serial: str) -> str:
         import uiautomator2 as u2
@@ -180,25 +220,27 @@ class DeviceConnector:
         top = max(1, dh // 2)
         self.last_screenshot = img.crop((0, 0, dw, top)).convert("RGB")
 
-    def _probe_wm(self) -> None:
-        """Read `wm size` once per phone. Physical and override can differ."""
-        if self.demo_mode or not self.serial:
-            return
-        cached = self._wm_cache.get(self.serial)
+    def wm_for(self, serial: Optional[str] = None):
+        """Physical and override sizes for one phone. Cached."""
+        serial = serial or self.serial
+        if not serial:
+            return ()
+        cached = self._wm_cache.get(serial)
         if cached is not None:
-            self.wm_sizes = cached
-            return
+            if serial == self.serial:
+                self.wm_sizes = cached
+            return cached
         sizes: Tuple[Tuple[int, int], ...] = ()
         try:
             import adbutils
             import re
-            text = adbutils.adb.device(serial=self.serial).shell("wm size") or ""
+            text = adbutils.adb.device(serial=serial).shell("wm size") or ""
             found = []
             for line in str(text).splitlines():
-                m = re.search(r"(\d+)\s*x\s*(\d+)", line)
-                if not m:
+                match = re.search(r"(\d+)\s*x\s*(\d+)", line)
+                if not match:
                     continue
-                pair = (int(m.group(1)), int(m.group(2)))
+                pair = (int(match.group(1)), int(match.group(2)))
                 if "override" in line.lower():
                     found.insert(0, pair)
                 else:
@@ -206,8 +248,15 @@ class DeviceConnector:
             sizes = tuple(found)
         except Exception:
             sizes = ()
-        self._wm_cache[self.serial] = sizes
-        self.wm_sizes = sizes
+        self._wm_cache[serial] = sizes
+        if serial == self.serial:
+            self.wm_sizes = sizes
+        return sizes
+
+    def _probe_wm(self) -> None:
+        if self.demo_mode or not self.serial:
+            return
+        self.wm_for(self.serial)
 
     def _adb_screencap(self) -> Optional[Image.Image]:
         """Pure adb screencap into memory – no temp files."""
