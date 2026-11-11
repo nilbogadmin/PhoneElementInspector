@@ -20,10 +20,13 @@ class DeviceConnector:
         self.last_screenshot: Optional[Image.Image] = None
         self.screen_size: Tuple[int, int] = (1080, 2400)
         self.serial: Optional[str] = None
+        self.px_scale = 1.0
+        self.device_px: Tuple[int, int] = (1080, 2400)
         self._model_cache: dict = {}
         self._cap_running = False
         self._cap_thread = None
         self._frame_callback = None
+        self._demo_sent = False
 
     def connect(self) -> str:
         """Try real ADB first; fall back to demo only if nothing is connected."""
@@ -120,44 +123,55 @@ class DeviceConnector:
     def _capture_loop(self):
         while self._cap_running:
             if self.demo_mode or not self.device:
-                if self.last_screenshot and self._frame_callback:
+                if (
+                    self.last_screenshot
+                    and self._frame_callback
+                    and not self._demo_sent
+                ):
+                    self._demo_sent = True
                     try:
                         self._frame_callback(self.last_screenshot)
                     except Exception:
                         pass
-                threading.Event().wait(0.3)
+                threading.Event().wait(0.4)
                 continue
             try:
-                # Fast raw screencap
                 img = self._adb_screencap()
-                if img:
-                    # Downscale for smoother UI updates
-                    w, h = img.size
-                    if w > 540:
-                        scale = 540 / w
-                        img = img.resize((540, int(h * scale)), Image.Resampling.BILINEAR)
-                    self.last_screenshot = img.convert("RGB")
-                    self.screen_size = self.last_screenshot.size
+                if img is not None:
+                    self._set_display(img)
                     if self._frame_callback:
                         self._frame_callback(self.last_screenshot)
+                else:
+                    threading.Event().wait(0.15)
             except Exception:
-                threading.Event().wait(0.05)
+                threading.Event().wait(0.15)
 
     def _refresh_real(self) -> str:
         if not self.device:
             return self._connect_real()
         try:
             xml = self.device.dump_hierarchy()
-            self.last_hierarchy = parse_hierarchy_xml(xml)
-            img = self.device.screenshot(format="pillow")
-            if img is None:
-                img = self._adb_screencap()
-            self.last_screenshot = img.convert("RGB") if img else None
-            if self.last_screenshot:
-                self.screen_size = self.last_screenshot.size
+            if xml:
+                self.last_hierarchy = parse_hierarchy_xml(xml)
+            img = self._adb_screencap()
+            if img is not None:
+                self._set_display(img)
             return "Refreshed"
         except Exception as e:
             return f"Refresh failed: {e}"
+
+    def _set_display(self, img: Image.Image) -> None:
+        """Keep one small top-half frame. Hierarchy stays in device pixels."""
+        w, h = img.size
+        self.device_px = (w, h)
+        self.screen_size = (w, h)
+        scale = 1.0 if w <= 400 else 400 / float(w)
+        self.px_scale = scale
+        if scale != 1.0:
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BILINEAR)
+        dw, dh = img.size
+        top = max(1, dh // 2)
+        self.last_screenshot = img.crop((0, 0, dw, top)).convert("RGB")
 
     def _adb_screencap(self) -> Optional[Image.Image]:
         """Pure adb screencap into memory – no temp files."""
@@ -176,7 +190,9 @@ class DeviceConnector:
                 idx = data.find(b"\x89PNG")
                 if idx >= 0:
                     data = data[idx:]
-            return Image.open(io.BytesIO(data))
+            im = Image.open(io.BytesIO(data))
+            im.load()
+            return im
         except Exception:
             return None
 
@@ -189,10 +205,10 @@ class DeviceConnector:
         self.last_hierarchy = load_hierarchy_from_file(xml_path)
         if img_path.exists():
             with Image.open(img_path) as im:
-                self.last_screenshot = im.convert("RGB")
+                img = im.convert("RGB")
         else:
-            self.last_screenshot = self._generate_placeholder_screenshot()
-        self.screen_size = self.last_screenshot.size
+            img = self._generate_placeholder_screenshot()
+        self._set_display(img)
         return "Demo mode (no ADB device)"
 
     def _generate_placeholder_screenshot(self) -> Image.Image:

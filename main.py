@@ -7,7 +7,23 @@ import sys
 from pathlib import Path
 
 
+def _win_dpi() -> None:
+    """Match mouse clicks to the pixels the user sees on scaled Windows displays."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 def _boot() -> None:
+    _win_dpi()
     if getattr(sys, "frozen", False):
         root = Path(sys.executable).resolve().parent
         bundled = Path(getattr(sys, "_MEIPASS", root))

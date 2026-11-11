@@ -102,3 +102,29 @@ def flatten_elements(root: UIElement) -> List[UIElement]:
     for child in root.children:
         result.extend(flatten_elements(child))
     return result
+
+
+def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int = 0):
+    """Smallest element under the point. Skip the outer screen frame only."""
+    best = None
+    best_area = None
+    limit_w = img_w * 0.96
+    limit_h = img_h * 0.96
+    for el in elements:
+        if getattr(el, "ignored", False):
+            continue
+        l, t, r, b = el.bounds
+        w = r - l
+        h = b - t
+        if w < 2 or h < 2:
+            continue
+        # The window itself. Full-width buttons and rows are still selectable.
+        if w >= limit_w and h >= limit_h:
+            continue
+        if ix < l - slop or ix > r + slop or iy < t - slop or iy > b + slop:
+            continue
+        area = w * h
+        if best is None or area < best_area:
+            best = el
+            best_area = area
+    return best

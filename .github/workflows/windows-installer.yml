@@ -53,7 +53,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
+          tag_name: v1.0.${{ github.run_number }}
           name: Phone Element Inspector
           make_latest: "true"
           overwrite_files: true
@@ -61,6 +61,9 @@ jobs:
             Download PhoneElementInspector.exe and double-click it.
             Nothing else to install. ADB is inside the exe.
             Plug the phones in with USB debugging on.
+            Drag the top bar to move the window. X closes it.
+            Click an element to select it. The mirror picture updates on its own.
+            Element boxes update only when the screen actually changes.
             Saved tags and rules stay in a data folder next to the exe.
           files: dist/PhoneElementInspector.exe
         env:

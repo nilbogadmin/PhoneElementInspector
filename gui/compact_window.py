@@ -5,17 +5,17 @@ Mirror only shows when exactly one device is connected.
 """
 from __future__ import annotations
 import random
+import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import messagebox
 from typing import Optional
-from pathlib import Path
 
 from core.device import DeviceConnector
 from core.tagger import Tagger
 from core.rules import RulesEngine
-from core.element import UIElement
+from core.element import UIElement, flatten_elements
 from core.paths import app_dir
 from gui.phone_view import PhoneView
 
@@ -31,6 +31,7 @@ LABEL = "#ffffff"
 BAR_W = 300
 BAR_H = 48
 DROP_H = 36
+HEAD_H = 30
 PHONE_ASPECT = (19.5 / 9) * 0.5   # half height for top-half only
 
 
@@ -69,6 +70,14 @@ class CompactController(ctk.CTk):
         self._u2_lock = threading.Lock()
         self._rule_busy = False
         self._pool = ThreadPoolExecutor(max_workers=24, thread_name_prefix="rules")
+        self._hier_busy = False
+        self._detect_busy = False
+        self._pause_hier = False
+        self._tree_sig_val = None
+        self._xml_hash = None
+        self._mapped_scale = None
+        self._dev_sig = None
+        self._overlay_job = None
 
         self._build_ui()
         self._place_bottom_right()
@@ -77,10 +86,22 @@ class CompactController(ctk.CTk):
         self._bind_drag()
 
     def _build_ui(self):
-        # Phone mirror (always visible)
+        btn_font = ctk.CTkFont(family="Poppins Condensed", size=11, weight="bold")
+        menu_font = ctk.CTkFont(family="Poppins Condensed", size=12, weight="bold")
+
+        self.header = ctk.CTkFrame(self, height=HEAD_H, fg_color=SURFACE, corner_radius=12)
+        self.header.pack(fill="x", side="top", pady=(0, 4))
+        self.header.pack_propagate(False)
+        self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
+        self.drag_zone.pack(side="left", fill="both", expand=True)
+        self.close_btn = ctk.CTkButton(
+            self.header, text="X", width=26, height=22, corner_radius=6,
+            fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
+        )
+        self.close_btn.pack(side="right", padx=6, pady=4)
+
         self.mirror_frame = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=16)
 
-        menu_font = ctk.CTkFont(family="Poppins Condensed", size=12, weight="bold")
         self.device_menu = ctk.CTkOptionMenu(
             self.mirror_frame,
             values=["WAITING"],
@@ -103,42 +124,44 @@ class CompactController(ctk.CTk):
         self.phone_view.pack(fill="both", expand=True, padx=6, pady=6)
         self.phone_view.set_outline_mode(show_all=False, only_tagged=True)
 
-        # Overlay info (one message at a time, centered on mirror)
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
             font=ctk.CTkFont(family="Poppins Condensed", size=13, weight="bold"),
-            fg_color="#1c1c1e", corner_radius=6
+            fg_color="#1c1c1e", corner_radius=6,
         )
-        self.overlay.place(relx=0.5, rely=0.92, anchor="center")
-        self.overlay.lower()
 
-        # Control bar – all buttons same size, no icons, all caps
         self.bar = ctk.CTkFrame(self, height=BAR_H, fg_color=SURFACE, corner_radius=16)
         self.bar.pack(fill="x", side="bottom", pady=(4, 0))
         self.bar.pack_propagate(False)
 
-        inner = ctk.CTkFrame(self.bar, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=8, pady=6)
+        self._bar_inner = ctk.CTkFrame(self.bar, fg_color="transparent")
+        self._bar_inner.pack(fill="both", expand=True, padx=8, pady=6)
 
-        btn_font = ctk.CTkFont(family="Poppins Condensed", size=11, weight="bold")
         btn_w, btn_h = 62, 26
-
-        self.add_btn = ctk.CTkButton(inner, text="ADD", width=btn_w, height=btn_h, corner_radius=6,
-                                     fg_color=GREEN, hover_color="#28b34a",
-                                     command=self._quick_rule, font=btn_font)
+        self.add_btn = ctk.CTkButton(
+            self._bar_inner, text="ADD", width=btn_w, height=btn_h, corner_radius=6,
+            fg_color=GREEN, hover_color="#28b34a",
+            command=self._quick_rule, font=btn_font,
+        )
         self.add_btn.pack(side="left", padx=2)
 
-        self.run_btn = ctk.CTkButton(inner, text="START", width=btn_w, height=btn_h, corner_radius=6,
-                                     fg_color=BLUE, hover_color="#0066cc",
-                                     command=self._toggle_rules, font=btn_font)
+        self.run_btn = ctk.CTkButton(
+            self._bar_inner, text="START", width=btn_w, height=btn_h, corner_radius=6,
+            fg_color=BLUE, hover_color="#0066cc",
+            command=self._toggle_rules, font=btn_font,
+        )
         self.run_btn.pack(side="left", padx=2)
+
+    def _window_height(self) -> int:
+        mirror_h = int(BAR_W * PHONE_ASPECT)
+        return mirror_h + BAR_H + DROP_H + HEAD_H + 16
 
     def _place_bottom_right(self):
         self.update_idletasks()
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         mirror_h = int(BAR_W * PHONE_ASPECT)
-        total_h = mirror_h + BAR_H + DROP_H + 12
+        total_h = self._window_height()
         x = sw - BAR_W - 16
         y = sh - total_h - 48
         self.geometry(f"{BAR_W}x{total_h}+{x}+{y}")
@@ -156,7 +179,7 @@ class CompactController(ctk.CTk):
             pos = ""
         if self.mirror_on:
             mirror_h = int(BAR_W * PHONE_ASPECT)
-            total_h = mirror_h + BAR_H + DROP_H + 12
+            total_h = self._window_height()
             self.geometry(f"{BAR_W}x{total_h}{pos}")
             self.mirror_frame.pack(fill="both", expand=True, before=self.bar)
             self._start_live()
@@ -185,8 +208,9 @@ class CompactController(ctk.CTk):
         self._apply_geometry()
 
     def _bind_drag(self):
-        self.bar.bind("<Button-1>", self._start_drag)
-        self.bar.bind("<B1-Motion>", self._do_drag)
+        for widget in (self.header, self.drag_zone, self.bar, self._bar_inner):
+            widget.bind("<Button-1>", self._start_drag)
+            widget.bind("<B1-Motion>", self._do_drag)
 
     def _start_drag(self, event):
         self._drag_x = event.x_root - self.winfo_x()
@@ -195,73 +219,121 @@ class CompactController(ctk.CTk):
     def _do_drag(self, event):
         x = event.x_root - self._drag_x
         y = event.y_root - self._drag_y
-        self.geometry(f"+{x}+{y}")
+        self.geometry(f"{self.winfo_width()}x{self.winfo_height()}+{x}+{y}")
+
+    def _close(self):
+        self._rules_running = False
+        self._pause_hier = True
+        try:
+            self.device.stop_live()
+        except Exception:
+            pass
+        self.destroy()
 
     def _initial_load(self):
+        threading.Thread(target=self._boot_device, daemon=True).start()
+
+    def _boot_device(self):
         msg = self.device.connect()
-        self._show_overlay(msg.split("·")[0].strip() if "·" in msg else msg)
-        self._refresh_view()
+        self.after(0, lambda m=msg: self._after_connect(m))
+
+    def _after_connect(self, msg: str):
+        short = msg.split("·")[0].strip() if "·" in msg else msg
+        self._show_overlay(short)
+        self._show_current()
 
     def _start_detect(self):
         self._detect_job = self.after(2000, self._detect_tick)
 
     def _detect_tick(self):
+        if not self._detect_busy:
+            self._detect_busy = True
+            threading.Thread(target=self._detect_worker, daemon=True).start()
+        self._detect_job = self.after(2000, self._detect_tick)
+
+    def _detect_worker(self):
         try:
             pairs = self.device.list_devices()
         except Exception:
             pairs = []
+        self._detect_busy = False
+        sig = tuple(pairs)
+        if sig == self._dev_sig:
+            return
+        self._dev_sig = sig
+        try:
+            self.after(0, lambda p=list(pairs): self._apply_devices(p))
+        except Exception:
+            pass
+
+    def _apply_devices(self, pairs):
         labels = []
         mapping: dict[str, str] = {}
         used = {}
         for serial, model in pairs:
             label = model
             used[label] = used.get(label, 0) + 1
-            if used[label] > 1:
-                label = f"{model} {serial[-4:]}"
-            # first one keeps the plain name; fix collision by rewriting if needed
-            if label in mapping:
+            if used[label] > 1 or label in mapping:
                 label = f"{model} {serial[-4:]}"
             mapping[label] = serial
             labels.append(label)
         self._serial_by_label = mapping
         if not labels:
-            self.device_menu.configure(values=["WAITING"])
-            self.device_menu.set("WAITING")
-        else:
-            current = self.device_menu.get()
-            self.device_menu.configure(values=labels)
-            if current in labels:
-                self.device_menu.set(current)
-            else:
-                # keep the same serial if it is still connected
-                keep = next((lb for lb, s in mapping.items() if s == self.device.serial), labels[0])
-                self.device_menu.set(keep)
-                if self.device.serial != mapping.get(keep):
-                    self._on_device_pick(keep)
-        self._detect_job = self.after(2000, self._detect_tick)
+            if self.device_menu.get() != "WAITING":
+                self.device_menu.configure(values=["WAITING"])
+                self.device_menu.set("WAITING")
+            return
+        current = self.device_menu.get()
+        self.device_menu.configure(values=labels)
+        if current in labels:
+            self.device_menu.set(current)
+            return
+        keep = next((lb for lb, s in mapping.items() if s == self.device.serial), labels[0])
+        self.device_menu.set(keep)
+        if self.device.serial != mapping.get(keep):
+            self._on_device_pick(keep)
 
     def _on_device_pick(self, label: str):
         serial = self._serial_by_label.get(label)
         if not serial or serial == self.device.serial:
             return
+        self._pause_hier = True
+        self._tree_sig_val = None
+        self._xml_hash = None
+        self.current_element = None
+        self.phone_view.clear_selection()
+        self._show_overlay(label)
+        threading.Thread(target=self._switch_device, args=(serial,), daemon=True).start()
+
+    def _switch_device(self, serial: str):
         try:
             self.device.select_serial(serial)
         except Exception as e:
-            self._show_overlay(str(e)[:30])
+            self._pause_hier = False
+            try:
+                self.after(0, lambda: self._show_overlay(str(e)[:30]))
+            except Exception:
+                pass
             return
-        self.current_element = None
-        self._selected_key = None
-        self.phone_view.locked_bounds = None
-        self.phone_view.selected = None
         try:
-            self.phone_view._draw_locked_outline()
+            self.after(0, self._after_switch)
         except Exception:
-            pass
-        self._show_overlay(label)
+            self._pause_hier = False
+
+    def _after_switch(self):
+        self._pause_hier = False
+        self._show_current()
+
+    def _show_current(self):
+        img = self.device.last_screenshot
+        if img is not None:
+            self.phone_view.set_frame(img)
+        if self.device.last_hierarchy is not None:
+            self._apply_hierarchy(self.device.last_hierarchy)
 
     def _start_live(self):
         self.device.start_live(self._on_live_frame)
-        self._hier_job = self.after(4000, self._hier_tick)
+        self._hier_job = self.after(1500, self._hier_tick)
 
     def _stop_live(self):
         self.device.stop_live()
@@ -279,48 +351,92 @@ class CompactController(ctk.CTk):
             self._frame_pending = False
 
     def _consume_frame(self):
+        """Picture only. Element boxes stay until the hierarchy actually changes."""
         self._frame_pending = False
-        self._refresh_view()
+        img = self.device.last_screenshot
+        if img is None:
+            return
+        self.phone_view.set_frame(img)
+        scale = float(getattr(self.device, "px_scale", 1) or 1)
+        if self.root_element is not None and scale != self._mapped_scale:
+            self._apply_hierarchy(self.root_element)
 
     def _hier_tick(self):
-        if self.mirror_on and not self.device.demo_mode:
-            try:
-                self.device._refresh_real()
-            except Exception:
-                pass
+        if (
+            self.mirror_on
+            and not self.device.demo_mode
+            and not self._hier_busy
+            and not self._pause_hier
+            and self.device.device is not None
+        ):
+            self._hier_busy = True
+            threading.Thread(target=self._hier_worker, daemon=True).start()
         if self.mirror_on:
-            self._hier_job = self.after(4000, self._hier_tick)
+            self._hier_job = self.after(2000, self._hier_tick)
 
-    def _refresh_view(self):
-        if not self.device.last_screenshot or not self.device.last_hierarchy:
+    def _hier_worker(self):
+        try:
+            if self._pause_hier or not self.device.device:
+                return
+            serial = self.device.serial
+            xml = self.device.device.dump_hierarchy()
+            if not xml or self._pause_hier or self.device.serial != serial:
+                return
+            xml_hash = hashlib.sha1(
+                xml.encode("utf-8", "replace") if isinstance(xml, str) else xml
+            ).hexdigest()
+            if xml_hash == self._xml_hash:
+                return
+            from core.hierarchy import parse_hierarchy_xml
+            root = parse_hierarchy_xml(xml)
+            sig = self._tree_sig(root)
+            self._xml_hash = xml_hash
+            if sig == self._tree_sig_val:
+                return
+            self.device.last_hierarchy = root
+            self.after(0, lambda r=root, s=serial: self._apply_if_same_device(r, s))
+        except Exception:
+            pass
+        finally:
+            self._hier_busy = False
+
+    def _apply_if_same_device(self, root, serial: str):
+        if self.device.serial != serial:
             return
-        self.root_element = self.device.last_hierarchy
-        self.tagger.apply_tags_to_tree(self.root_element)
+        self._apply_hierarchy(root)
 
-        # Crop image to top 50%. Scale hierarchy bounds to this image once.
-        img = self.device.last_screenshot
-        w, h = img.size
-        half_h = max(1, h // 2)
-        top_half = img.crop((0, 0, w, half_h))
+    def _tree_sig(self, root: UIElement) -> str:
+        digest = hashlib.sha1()
+        for el in flatten_elements(root):
+            raw = getattr(el, "_raw_bounds", None) or el.bounds
+            l, t, r, b = raw
+            digest.update(
+                f"{el.class_name}|{el.resource_id}|{el.text}|{el.content_desc}|"
+                f"{l},{t},{r},{b}|{int(el.clickable)}\n".encode("utf-8", "replace")
+            )
+        return digest.hexdigest()
 
-        from core.element import flatten_elements
-        els = flatten_elements(self.root_element)
-        scaled_to = getattr(self.root_element, "_scaled_to", None)
-        if scaled_to != (w, h) and els:
-            max_r = max((e.bounds[2] for e in els), default=w) or w
-            max_b = max((e.bounds[3] for e in els), default=h) or h
-            if max_r > w * 1.15 or max_b > h * 1.15:
-                sx = w / max_r
-                sy = h / max_b
-                for el in els:
-                    l, t, r, b = el.bounds
-                    el.bounds = (int(l * sx), int(t * sy), int(r * sx), int(b * sy))
-            self.root_element._scaled_to = (w, h)
-
-        for el in els:
-            l, t, r, b = el.bounds
-            if t >= half_h:
-                el.ignored = True
+    def _apply_hierarchy(self, root: UIElement):
+        sig = self._tree_sig(root)
+        scale = float(getattr(self.device, "px_scale", 1) or 1)
+        if sig == self._tree_sig_val and scale == self._mapped_scale:
+            return
+        self._tree_sig_val = sig
+        self._mapped_scale = scale
+        view_h = 10 ** 9
+        if self.device.last_screenshot is not None:
+            view_h = self.device.last_screenshot.size[1]
+        visible = []
+        for el in flatten_elements(root):
+            raw = getattr(el, "_raw_bounds", None)
+            if raw is None:
+                el._raw_bounds = el.bounds
+                raw = el.bounds
+            l, t, r, b = raw
+            el.bounds = (
+                int(l * scale), int(t * scale), int(r * scale), int(b * scale)
+            )
+            if el.bounds[1] >= view_h:
                 continue
             key = (
                 el.resource_id or "",
@@ -329,31 +445,22 @@ class CompactController(ctk.CTk):
                 el.class_name or "",
             )
             if key in self._forgotten:
-                el.ignored = True
-
-        self.phone_view.set_data(
-            top_half,
-            self.root_element,
-            saved_crop=None,
-            preserve_selection=True,
-        )
+                continue
+            visible.append(el)
+        self.root_element = root
+        self.tagger.apply_tags_to_tree(root)
+        self.phone_view.set_elements(visible)
 
     def _on_element_selected(self, el: UIElement):
         self.current_element = el
-        # Include bounds so empty elements don't all match
-        self._selected_key = (
-            el.resource_id or "",
-            el.text or "",
-            el.content_desc or "",
-            el.class_name or "",
-            str(el.bounds),
-        )
-        self.phone_view.set_selected(el)
 
     def _show_overlay(self, text: str):
-        self.overlay.configure(text=text.upper())
+        self.overlay.configure(text=(text or "").upper())
+        self.overlay.place(relx=0.5, rely=0.92, anchor="center")
         self.overlay.lift()
-        self.after(1800, lambda: self.overlay.configure(text=""))
+        if self._overlay_job:
+            self.after_cancel(self._overlay_job)
+        self._overlay_job = self.after(1600, self.overlay.place_forget)
 
     def _forget_current(self):
         if not self.current_element:
@@ -369,9 +476,11 @@ class CompactController(ctk.CTk):
         if getattr(self.current_element, "tag", None):
             self.tagger.remove_tag(self.current_element.tag)
         self.current_element = None
-        self.phone_view.set_selected(None)
+        self.phone_view.clear_selection()
+        self._tree_sig_val = None
+        if self.root_element is not None:
+            self._apply_hierarchy(self.root_element)
         self._show_overlay("Forgotten")
-        self._refresh_view()
 
     def _quick_rule(self):
         if not self.current_element:
@@ -390,6 +499,7 @@ class CompactController(ctk.CTk):
             ]
             self.tagger.save()
         self.phone_view.set_selected(self.current_element)
+        self.phone_view._rebuild_tag_boxes()
         self.rules.add_rule({
             "name": f"Click {name}",
             "enabled": True,
