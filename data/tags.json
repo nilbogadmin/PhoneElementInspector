@@ -1,0 +1,53 @@
+{
+  "BalanceAmount": {
+    "selector": {
+      "resource_id": "com.demo.bank:id/balance_amount",
+      "text": "$12,450.75",
+      "content_desc": "Current balance",
+      "class_name": "android.widget.TextView",
+      "package": "com.demo.bank"
+    },
+    "notes": "Main balance display",
+    "bounds_example": [
+      100,
+      390,
+      450,
+      480
+    ],
+    "display_name": "$12,450.75"
+  },
+  "TransferButton": {
+    "selector": {
+      "resource_id": "com.demo.bank:id/btn_transfer",
+      "text": "Transfer",
+      "content_desc": "Transfer money",
+      "class_name": "android.widget.Button",
+      "package": "com.demo.bank"
+    },
+    "notes": "",
+    "bounds_example": [
+      60,
+      580,
+      520,
+      720
+    ],
+    "display_name": "Transfer"
+  },
+  "PayBillsButton": {
+    "selector": {
+      "resource_id": "com.demo.bank:id/btn_paybills",
+      "text": "Pay Bills",
+      "content_desc": "Pay bills",
+      "class_name": "android.widget.Button",
+      "package": "com.demo.bank"
+    },
+    "notes": "",
+    "bounds_example": [
+      560,
+      580,
+      1020,
+      720
+    ],
+    "display_name": "Pay Bills"
+  }
+}

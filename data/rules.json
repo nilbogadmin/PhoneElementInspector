@@ -1,0 +1,35 @@
+{
+  "active": "com.demo.bank",
+  "apps": {
+    "demo": {
+      "rules": [
+        {
+          "name": "Balance is showing",
+          "enabled": true,
+          "conditions": [
+            {
+              "type": "element_visible",
+              "tag": "BalanceAmount"
+            }
+          ],
+          "logic": "AND",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Balance element is currently visible on screen"
+            },
+            {
+              "type": "extract_text",
+              "tag": "BalanceAmount"
+            }
+          ]
+        }
+      ],
+      "crop": null
+    },
+    "com.demo.bank": {
+      "rules": [],
+      "crop": null
+    }
+  }
+}
