@@ -80,7 +80,7 @@ class CompactController(ctk.CTk):
         self._overlay_job = None
 
         self._build_ui()
-        self._place_bottom_right()
+        self._place_center()
         self.after(200, self._initial_load)
         self._start_detect()
         self._bind_drag()
@@ -156,43 +156,38 @@ class CompactController(ctk.CTk):
         mirror_h = int(BAR_W * PHONE_ASPECT)
         return mirror_h + BAR_H + DROP_H + HEAD_H + 16
 
-    def _place_bottom_right(self):
+    def _format_geo(self, x: int, y: int) -> str:
+        """Fixed size. Negative coordinates must not become '+-10' or Tk throws."""
+        w, h = self._win_w, self._win_h
+        sw = self.winfo_screenwidth() or 1280
+        sh = self.winfo_screenheight() or 800
+        x = int(x)
+        y = int(y)
+        x = min(max(x, -w + 80), max(0, sw - 80))
+        y = min(max(y, 0), max(0, sh - 40))
+        sx = f"+{x}" if x >= 0 else str(x)
+        sy = f"+{y}" if y >= 0 else str(y)
+        return f"{w}x{h}{sx}{sy}"
+
+    def _place_center(self):
         self.update_idletasks()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        mirror_h = int(BAR_W * PHONE_ASPECT)
-        total_h = self._window_height()
-        x = sw - BAR_W - 16
-        y = sh - total_h - 48
-        self.geometry(f"{BAR_W}x{total_h}+{x}+{y}")
+        self._win_w = BAR_W
+        self._win_h = self._window_height()
+        self.resizable(False, False)
+        self.minsize(self._win_w, self._win_h)
+        self.maxsize(self._win_w, self._win_h)
+        sw = self.winfo_screenwidth() or 1280
+        sh = self.winfo_screenheight() or 800
+        x = max(0, (sw - self._win_w) // 2)
+        y = max(0, (sh - self._win_h) // 2)
+        self.geometry(self._format_geo(x, y))
         self.mirror_on = True
         self.mirror_frame.pack(fill="both", expand=True, before=self.bar)
         self._start_live()
 
     def _apply_geometry(self):
-        # Keep current x/y, only change size
-        geo = self.geometry()
-        # parse +x+y if present
-        if "+" in geo:
-            pos = "+" + geo.split("+", 1)[1]
-        else:
-            pos = ""
-        if self.mirror_on:
-            mirror_h = int(BAR_W * PHONE_ASPECT)
-            total_h = self._window_height()
-            self.geometry(f"{BAR_W}x{total_h}{pos}")
-            self.mirror_frame.pack(fill="both", expand=True, before=self.bar)
-            self._start_live()
-            # Re-anchor bottom so it grows upward
-            self.update_idletasks()
-            sh = self.winfo_screenheight()
-            y = sh - total_h - 48
-            x = self.winfo_x()
-            self.geometry(f"{BAR_W}x{total_h}+{x}+{y}")
-        else:
-            self.geometry(f"{BAR_W}x{BAR_H}{pos}")
-            self.mirror_frame.pack_forget()
-            self._stop_live()
+        x, y = self.winfo_x(), self.winfo_y()
+        self.geometry(self._format_geo(x, y))
 
     def _toggle_mirror(self):
         # Only allow mirror when exactly one device
@@ -219,7 +214,7 @@ class CompactController(ctk.CTk):
     def _do_drag(self, event):
         x = event.x_root - self._drag_x
         y = event.y_root - self._drag_y
-        self.geometry(f"{self.winfo_width()}x{self.winfo_height()}+{x}+{y}")
+        self.geometry(self._format_geo(x, y))
 
     def _close(self):
         self._rules_running = False
