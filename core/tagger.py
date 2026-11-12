@@ -57,6 +57,7 @@ class Tagger:
             "bounds_example": list(element.bounds),
             "display_name": element.display_name,
             "family": list(family) if family else [],
+            "serial": getattr(element, "_trained_serial", None) or "",
             "norm": list(norm) if norm else None,
             "screen": list(screen) if screen else None,
         }
@@ -74,71 +75,81 @@ class Tagger:
     def list_tags(self) -> List[str]:
         return sorted(self.tags.keys())
 
-    def apply_tags_to_tree(self, root: UIElement, family=None) -> None:
+    def apply_tags_to_tree(self, root: UIElement, family=None, serial=None) -> None:
         """Attach tags that belong on this phone. Other model years stay off."""
         for el in flatten_elements(root):
             el.tag = None
         for tag_name in list(self.tags):
-            hit = self.find_for_click(root, tag_name, family=family)
+            hit = self.find_for_click(root, tag_name, family=family, serial=serial)
             if hit is not None:
                 hit.tag = tag_name
                 hit.notes = (self.tags.get(tag_name) or {}).get("notes", "")
 
-    def find_for_click(self, root: UIElement, tag_name: str, family=None) -> Optional[UIElement]:
+    def find_for_click(self, root: UIElement, tag_name: str, family=None, serial=None) -> Optional[UIElement]:
         """The added element only. Never a lookalike, and never the bottom half."""
         from .match import same_family, in_top_half
 
         data = self.tags.get(tag_name) or {}
-        if not data or not same_family(data.get("family"), family):
+        if not data or not self._allowed(data, family, serial):
             return None
         selector = dict(data.get("selector") or {})
-        selector.pop("bounds", None)
         rid = selector.get("resource_id") or ""
         text = selector.get("text") or ""
         desc = selector.get("content_desc") or ""
         cls = selector.get("class_name") or ""
-        # A class name alone matches half the screen. Require a real identity.
-        if not (rid or text or desc):
+        if not (rid or text or desc or cls):
             return None
-        els = flatten_elements(root)
+        els = [
+            el for el in flatten_elements(root)
+            if el.clickable and el.width > 1 and el.height > 1 and in_top_half(el, root)
+        ]
+        if rid:
+            els = [el for el in els if el.resource_id == rid]
+        else:
+            if text:
+                els = [el for el in els if el.text == text]
+            if desc:
+                els = [el for el in els if el.content_desc == desc]
+            if cls:
+                els = [el for el in els if el.class_name == cls]
+            # No id and no label: only the same spot, never every view of that class.
+            if not (text or desc) and not data.get("norm"):
+                return None
+        if cls and rid:
+            same_cls = [el for el in els if el.class_name == cls]
+            if same_cls:
+                els = same_cls
         if not els:
             return None
-        max_r = max(el.bounds[2] for el in els) or 1
-        max_b = max(el.bounds[3] for el in els) or 1
+        if len(els) == 1 and (rid or text or desc):
+            return els[0]
+        return self._closest(els, data, root, loose=bool(rid or text or desc))
 
-        def same(el: UIElement) -> bool:
-            if not el.clickable or el.width < 2 or el.height < 2:
-                return False
-            if not in_top_half(el, root):
-                return False
-            if rid and el.resource_id != rid:
-                return False
-            if text and el.text != text:
-                return False
-            if desc and el.content_desc != desc:
-                return False
-            if cls and el.class_name != cls:
-                return False
+    def _allowed(self, data, family, serial) -> bool:
+        from .match import same_family
+
+        if same_family(data.get("family"), family):
             return True
+        saved = data.get("serial") or ""
+        return bool(saved and serial and saved == serial)
 
-        pool = [el for el in els if same(el)]
-        if not pool:
-            return None
+    def _closest(self, els, data, root: UIElement, loose: bool) -> Optional[UIElement]:
         norm = data.get("norm")
-        if norm and len(norm) == 2:
-            nx, ny = float(norm[0]), float(norm[1])
+        if not norm or len(norm) != 2:
+            return els[0] if len(els) == 1 else None
+        max_r = max(el.bounds[2] for el in flatten_elements(root)) or 1
+        max_b = max(el.bounds[3] for el in flatten_elements(root)) or 1
+        nx, ny = float(norm[0]), float(norm[1])
+        limit = 0.12 if loose else 0.04
 
-            def dist(el: UIElement) -> float:
-                cx, cy = el.center
-                return ((cx / max_r - nx) ** 2 + (cy / max_b - ny) ** 2) ** 0.5
+        def dist(el: UIElement) -> float:
+            cx, cy = el.center
+            return ((cx / max_r - nx) ** 2 + (cy / max_b - ny) ** 2) ** 0.5
 
-            near = [el for el in pool if dist(el) <= 0.08]
-            if not near:
-                return None
-            return min(near, key=dist)
-        if len(pool) == 1:
-            return pool[0]
-        return None
+        near = [el for el in els if dist(el) <= limit]
+        if not near:
+            return None
+        return min(near, key=dist)
 
     def find_by_tag(self, root: UIElement, tag_name: str) -> Optional[UIElement]:
         for el in flatten_elements(root):

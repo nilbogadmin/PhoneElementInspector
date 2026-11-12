@@ -439,12 +439,33 @@ class CompactController(ctk.CTk):
             self.phone_view.canvas.lift()
         except Exception:
             pass
+        for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
+            try:
+                widget.lift()
+            except Exception:
+                pass
         self._bind_mirror_clicks()
 
     def _keep_clicks_on_mirror(self):
         self._raise_controls()
 
+    def _pointer_in(self, widget, event) -> bool:
+        try:
+            x, y = event.x_root, event.y_root
+            left, top = widget.winfo_rootx(), widget.winfo_rooty()
+            return left <= x <= left + widget.winfo_width() and top <= y <= top + widget.winfo_height()
+        except Exception:
+            return False
+
+    def _owned_by(self, widget, owner) -> bool:
+        while widget is not None:
+            if widget == owner:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
     def _bind_mirror_clicks(self):
+        """Mirror clicks select an element. ADD and START keep their own clicks."""
         def forward(event):
             canvas = self.phone_view.canvas
             try:
@@ -458,10 +479,26 @@ class CompactController(ctk.CTk):
             event.y = y
             self.phone_view._on_press(event)
 
-        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header):
+        def release(event):
+            # The rounded canvases sit on the buttons and eat the release.
+            # If the pointer is on a button that did not receive it, run it.
+            if self._pointer_in(self.add_btn, event) and not self._owned_by(event.widget, self.add_btn):
+                self._quick_rule()
+                return "break"
+            if self._pointer_in(self.run_btn, event) and not self._owned_by(event.widget, self.run_btn):
+                self._toggle_rules()
+                return "break"
+            if self._pointer_in(self.close_btn, event) and not self._owned_by(event.widget, self.close_btn):
+                self.destroy()
+                return "break"
+
+        for frame in (self.mirror_frame, self.phone_view):
             bg = getattr(frame, "_canvas", None)
             if bg is not None and bg is not self.phone_view.canvas:
                 bg.bind("<Button-1>", forward)
+        if not getattr(self, "_release_bound", False):
+            self.bind_all("<ButtonRelease-1>", release)
+            self._release_bound = True
 
     def _display_scales(self, root: UIElement):
         """One scale for both axes, so a short button is never stretched tall."""
@@ -515,7 +552,11 @@ class CompactController(ctk.CTk):
                 continue
             visible.append(el)
         self.root_element = root
-        self.tagger.apply_tags_to_tree(root, family=getattr(self.device, "family", None))
+        self.tagger.apply_tags_to_tree(
+            root,
+            family=getattr(self.device, "family", None),
+            serial=self.device.serial,
+        )
         self.phone_view.set_elements(visible)
         self._keep_clicks_on_mirror()
 
@@ -570,6 +611,7 @@ class CompactController(ctk.CTk):
             ((raw[0] + raw[2]) / 2) / sw,
             ((raw[1] + raw[3]) / 2) / sh,
         ]
+        self.current_element._trained_serial = self.device.serial or ""
         self.tagger.add_tag(
             name, self.current_element, family=family, norm=norm, screen=[sw, sh]
         )
@@ -580,6 +622,7 @@ class CompactController(ctk.CTk):
             "name": f"Click {name}",
             "enabled": True,
             "family": family,
+            "serial": self.device.serial or "",
             "conditions": [{"type": "element_visible", "tag": name}],
             "actions": [{"type": "click", "tag": name}],
         })
@@ -664,7 +707,9 @@ class CompactController(ctk.CTk):
         from core.match import clicks_for_device
         family = self.device.identity(serial).get("family") or []
         wm = self.device.wm_for(serial)
-        taps = clicks_for_device(self.tagger, self.rules.rules, root, family, wm)
+        taps = clicks_for_device(
+            self.tagger, self.rules.rules, root, family, wm, serial=serial
+        )
         for x, y in taps:
             try:
                 d.shell(f"input tap {x} {y}")

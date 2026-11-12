@@ -109,7 +109,7 @@ def in_top_half(el: UIElement, root: UIElement) -> bool:
     return cy < height * 0.5
 
 
-def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=()) -> List[Tuple[int, int]]:
+def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None) -> List[Tuple[int, int]]:
     """Taps for elements the user added. Nothing else, and never the bottom half."""
     taps: List[Tuple[int, int]] = []
     for rule in rules:
@@ -118,12 +118,16 @@ def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm
         actions = rule.get("actions") or []
         if not any(a.get("type") == "click" for a in actions):
             continue
-        if not same_family(rule.get("family"), family):
+        rule_serial = rule.get("serial") or ""
+        allowed = same_family(rule.get("family"), family) or (
+            bool(rule_serial and serial and rule_serial == serial)
+        )
+        if not allowed:
             continue
         for cond in rule.get("conditions") or []:
             if cond.get("type") != "element_visible":
                 continue
-            el = tagger.find_for_click(root, cond.get("tag"), family=family)
+            el = tagger.find_for_click(root, cond.get("tag"), family=family, serial=serial)
             if el is None or not in_top_half(el, root):
                 continue
             taps.append(tap_xy(el, root, wm_sizes))
