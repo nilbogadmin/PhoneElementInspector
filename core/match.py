@@ -92,9 +92,7 @@ def tap_xy(el: UIElement, root: UIElement, wm_sizes: Sequence[Tuple[int, int]] =
         if abs(best[0] - hw) >= 4 or abs(best[1] - hh) >= 8:
             tw, th = best
     raw = _box(el)
-    cx = (raw[0] + raw[2]) / 2.0
-    cy = (raw[1] + raw[3]) / 2.0
-    return int(round(cx / hw * tw)), int(round(cy / hh * th))
+    return int(round((raw[0] + raw[2]) / 2.0)), int(round((raw[1] + raw[3]) / 2.0))
 
 
 def _box(el: UIElement):
@@ -102,15 +100,11 @@ def _box(el: UIElement):
 
 
 def screen_size(root: UIElement) -> Tuple[int, int]:
-    raw = _box(root)
-    width = int(raw[2] - raw[0])
-    height = int(raw[3] - raw[1])
-    if width > 50 and height > 50:
-        return width, height
+    """Full dump space. Root height alone cuts off the app and blocks the tap."""
     els = flatten_elements(root)
     width = max((_box(e)[2] for e in els), default=1) or 1
     height = max((_box(e)[3] for e in els), default=1) or 1
-    return width, height
+    return int(width), int(height)
 
 
 def in_top_half(el: UIElement, root: UIElement) -> bool:
@@ -118,7 +112,7 @@ def in_top_half(el: UIElement, root: UIElement) -> bool:
     _, height = screen_size(root)
     raw = _box(el)
     cy = (raw[1] + raw[3]) / 2.0
-    return cy < height * 0.5
+    return cy < height * 0.52
 
 
 def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 0.035) -> bool:
@@ -146,26 +140,26 @@ def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 
 
 
 def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
-    """The memorized control. Same class and box. An id must match when we have one."""
+    """The control that was added. Icons often have no text and no id."""
     if not saved or not in_top_half(el, root):
         return False
-    if (el.class_name or "") != (saved.get("class_name") or ""):
-        return False
     rid = saved.get("resource_id") or ""
-    if rid:
-        if (el.resource_id or "") != rid:
-            return False
-    else:
-        text = saved.get("text") or ""
-        desc = saved.get("content_desc") or ""
-        if text and (el.text or "") != text:
-            return False
-        if desc and (el.content_desc or "") != desc:
-            return False
-        if not text and not desc:
-            return False
+    text = saved.get("text") or ""
+    desc = saved.get("content_desc") or ""
+    cls = (saved.get("class_name") or "").rsplit(".", 1)[-1]
+    el_cls = (el.class_name or "").rsplit(".", 1)[-1]
     raw = _box(el)
-    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root))
+    if not same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.06 if rid else 0.045):
+        return False
+    if rid:
+        return (el.resource_id or "") == rid
+    if cls and el_cls and cls != el_cls:
+        return False
+    if text and (el.text or "") and (el.text or "") != text:
+        return False
+    if desc and (el.content_desc or "") and (el.content_desc or "") != desc:
+        return False
+    return True
 
 
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None) -> List[Tuple[int, int]]:

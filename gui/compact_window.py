@@ -759,9 +759,12 @@ class CompactController(ctk.CTk):
         )
         for x, y in taps:
             try:
-                d.shell(f"input tap {x} {y}")
+                d.click(int(x), int(y))
             except Exception:
-                pass
+                try:
+                    d.shell(f"input tap {int(x)} {int(y)}")
+                except Exception:
+                    pass
         return len(taps)
 
 
