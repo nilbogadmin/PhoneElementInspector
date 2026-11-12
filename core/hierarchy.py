@@ -50,13 +50,22 @@ def node_to_element(node, index: int = 0) -> UIElement:
 
 
 def parse_hierarchy_xml(xml_content: str | bytes) -> UIElement:
-    """Parse full hierarchy XML string into root UIElement."""
+    """Parse every window. The app is usually not the first one."""
     if isinstance(xml_content, str):
         xml_content = xml_content.encode("utf-8")
 
     root = etree.fromstring(xml_content)
-    # The root is usually <hierarchy> and the first child is the real root node
-    if root.tag == "hierarchy" and len(root) > 0:
+    if root.tag == "hierarchy" and len(root) > 1:
+        windows = [node_to_element(child, index=i) for i, child in enumerate(root)]
+        max_r = max((w.bounds[2] for w in windows), default=0)
+        max_b = max((w.bounds[3] for w in windows), default=0)
+        return UIElement(
+            class_name="hierarchy",
+            bounds=(0, 0, max_r, max_b),
+            clickable=False,
+            children=windows,
+        )
+    if root.tag == "hierarchy" and len(root) == 1:
         return node_to_element(root[0])
     return node_to_element(root)
 

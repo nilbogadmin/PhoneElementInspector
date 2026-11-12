@@ -194,7 +194,7 @@ class DeviceConnector:
         if not self.device:
             return self._connect_real()
         try:
-            xml = self.device.dump_hierarchy()
+            xml = self._dump_xml()
             if xml:
                 self.last_hierarchy = parse_hierarchy_xml(xml)
             img = self._adb_screencap()
@@ -257,6 +257,14 @@ class DeviceConnector:
         if self.demo_mode or not self.serial:
             return
         self.wm_for(self.serial)
+
+    def _dump_xml(self, device=None) -> str:
+        """Full tree. Compressed dumps keep the phone chrome and drop the app."""
+        target = device or self.device
+        try:
+            return target.dump_hierarchy(compressed=False)
+        except TypeError:
+            return target.dump_hierarchy()
 
     def _adb_screencap(self) -> Optional[Image.Image]:
         """Pure adb screencap into memory – no temp files."""

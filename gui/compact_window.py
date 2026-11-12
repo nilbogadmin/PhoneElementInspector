@@ -399,7 +399,7 @@ class CompactController(ctk.CTk):
             if self._pause_hier or not self.device.device:
                 return
             serial = self.device.serial
-            xml = self.device.device.dump_hierarchy()
+            xml = self.device._dump_xml()
             if not xml or self._pause_hier or self.device.serial != serial:
                 return
             xml_hash = hashlib.sha1(
@@ -745,7 +745,7 @@ class CompactController(ctk.CTk):
             with self._u2_lock:
                 self._u2_cache[serial] = d
         try:
-            xml = d.dump_hierarchy()
+            xml = self.device._dump_xml(d)
         except Exception:
             with self._u2_lock:
                 self._u2_cache.pop(serial, None)
