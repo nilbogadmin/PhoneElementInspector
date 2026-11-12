@@ -32,7 +32,8 @@ class DeviceConnector:
         self._cap_running = False
         self._cap_thread = None
         self._frame_callback = None
-        self._demo_sent = False
+        self._switching = False
+        self.frame_serial = None
 
     def connect(self) -> str:
         """Try real ADB first; fall back to demo only if nothing is connected."""
@@ -139,18 +140,25 @@ class DeviceConnector:
 
     def select_serial(self, serial: str) -> str:
         import uiautomator2 as u2
+        self._switching = True
         self.serial = serial
-        self.device = u2.connect(serial)
-        self.demo_mode = False
+        self.last_hierarchy = None
         try:
-            info = self.device.info or {}
-            self.screen_size = (
-                info.get("displayWidth", 1080),
-                info.get("displayHeight", 2400),
-            )
-        except Exception:
-            pass
-        return self._refresh_real()
+            self.device = u2.connect(serial)
+            self.demo_mode = False
+            try:
+                info = self.device.info or {}
+                self.screen_size = (
+                    info.get("displayWidth", 1080),
+                    info.get("displayHeight", 2400),
+                )
+            except Exception:
+                pass
+            self.family = list(self.identity(serial).get("family") or [])
+            return self._refresh_real()
+        finally:
+            self.frame_serial = serial
+            self._switching = False
 
     def start_live(self, callback):
         """Continuous capture on a background thread. Calls callback(img) for each frame."""
@@ -166,27 +174,19 @@ class DeviceConnector:
 
     def _capture_loop(self):
         while self._cap_running:
-            if self.demo_mode or not self.device:
-                if (
-                    self.last_screenshot
-                    and self._frame_callback
-                    and not self._demo_sent
-                ):
-                    self._demo_sent = True
-                    try:
-                        self._frame_callback(self.last_screenshot)
-                    except Exception:
-                        pass
-                threading.Event().wait(0.4)
+            if self._switching or self.demo_mode or not self.device:
+                threading.Event().wait(0.2)
                 continue
             try:
+                serial = self.serial
                 img = self._adb_screencap()
-                if img is not None:
-                    self._set_display(img)
-                    if self._frame_callback:
-                        self._frame_callback(self.last_screenshot)
-                else:
+                if img is None or self.serial != serial or self._switching:
                     threading.Event().wait(0.15)
+                    continue
+                self._set_display(img)
+                self.frame_serial = serial
+                if self._frame_callback:
+                    self._frame_callback(self.last_screenshot)
             except Exception:
                 threading.Event().wait(0.15)
 

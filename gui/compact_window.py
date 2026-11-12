@@ -321,7 +321,23 @@ class CompactController(ctk.CTk):
 
     def _after_switch(self):
         self._pause_hier = False
+        serial = self.device.serial
+        if serial:
+            self.device.family = list(self.device.identity(serial).get("family") or [])
+        self.current_element = None
+        self.phone_view.clear_selection()
+        self._tree_sig_val = None
+        self._mapped_scale = None
         self._show_current()
+        self._raise_controls()
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.focus_force()
+        except Exception:
+            pass
 
     def _show_current(self):
         img = self.device.last_screenshot
@@ -619,7 +635,7 @@ class CompactController(ctk.CTk):
 
     def _quick_rule(self):
         if not self.current_element:
-            messagebox.showinfo("Add", "Select an element on the mirror first")
+            self._show_overlay("Select element")
             return
         name = str(random.randint(1000, 9999))
         family = list(getattr(self.device, "family", []) or [])

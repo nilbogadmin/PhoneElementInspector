@@ -100,12 +100,29 @@ class Tagger:
 
         data = self.tags.get(tag_name) or {}
         exact = data.get("exact")
-        if not exact or not self._allowed(data, family, serial):
+        if not exact:
             return None
         hits = [el for el in flatten_elements(root) if exact_element(exact, el, root)]
-        if len(hits) != 1:
+        if not hits:
             return None
-        return hits[0]
+        if len(hits) == 1:
+            return hits[0]
+        screen = exact.get("screen") or [1, 1]
+        box = exact.get("bounds") or [0, 0, 0, 0]
+        sw, sh = max(float(screen[0]), 1.0), max(float(screen[1]), 1.0)
+        nx = (box[0] + box[2]) / 2.0 / sw
+        ny = (box[1] + box[3]) / 2.0 / sh
+        live_w, live_h = 1, 1
+        from .match import screen_size, _box
+        live_w, live_h = screen_size(root)
+
+        def dist(el: UIElement) -> float:
+            raw = _box(el)
+            cx = (raw[0] + raw[2]) / 2.0 / live_w
+            cy = (raw[1] + raw[3]) / 2.0 / live_h
+            return (cx - nx) ** 2 + (cy - ny) ** 2
+
+        return min(hits, key=dist)
 
     def _allowed(self, data, family, serial) -> bool:
         from .match import same_family

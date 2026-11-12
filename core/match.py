@@ -102,6 +102,11 @@ def _box(el: UIElement):
 
 
 def screen_size(root: UIElement) -> Tuple[int, int]:
+    raw = _box(root)
+    width = int(raw[2] - raw[0])
+    height = int(raw[3] - raw[1])
+    if width > 50 and height > 50:
+        return width, height
     els = flatten_elements(root)
     width = max((_box(e)[2] for e in els), default=1) or 1
     height = max((_box(e)[3] for e in els), default=1) or 1
@@ -116,7 +121,7 @@ def in_top_half(el: UIElement, root: UIElement) -> bool:
     return cy < height * 0.5
 
 
-def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 0.015) -> bool:
+def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 0.035) -> bool:
     """True only when both boxes are the same element on the screen.
 
     Edges are compared as a fraction of the screen, so a 2024 twin still
@@ -141,17 +146,24 @@ def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 
 
 
 def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
-    """The memorized record. Every field and the box have to match."""
+    """The memorized control. Same class and box. An id must match when we have one."""
     if not saved or not in_top_half(el, root):
         return False
     if (el.class_name or "") != (saved.get("class_name") or ""):
         return False
-    if (el.resource_id or "") != (saved.get("resource_id") or ""):
-        return False
-    if (el.text or "") != (saved.get("text") or ""):
-        return False
-    if (el.content_desc or "") != (saved.get("content_desc") or ""):
-        return False
+    rid = saved.get("resource_id") or ""
+    if rid:
+        if (el.resource_id or "") != rid:
+            return False
+    else:
+        text = saved.get("text") or ""
+        desc = saved.get("content_desc") or ""
+        if text and (el.text or "") != text:
+            return False
+        if desc and (el.content_desc or "") != desc:
+            return False
+        if not text and not desc:
+            return False
     raw = _box(el)
     return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root))
 
@@ -164,12 +176,6 @@ def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm
             continue
         actions = rule.get("actions") or []
         if not any(a.get("type") == "click" for a in actions):
-            continue
-        rule_serial = rule.get("serial") or ""
-        allowed = same_family(rule.get("family"), family) or (
-            bool(rule_serial and serial and rule_serial == serial)
-        )
-        if not allowed:
             continue
         for cond in rule.get("conditions") or []:
             if cond.get("type") != "element_visible":
