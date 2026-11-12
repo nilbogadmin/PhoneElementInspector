@@ -456,56 +456,65 @@ class CompactController(ctk.CTk):
             widget = getattr(widget, "master", None)
         return False
 
-    def _over(self, widget, event) -> bool:
-        """Hit test using one coordinate space. Do not mix x_root with winfo."""
+    def _inside(self, widget, x_root: int, y_root: int) -> bool:
         try:
-            src = event.widget
-            x = float(event.x) + src.winfo_rootx()
-            y = float(event.y) + src.winfo_rooty()
             left, top = widget.winfo_rootx(), widget.winfo_rooty()
-            return left <= x <= left + widget.winfo_width() and top <= y <= top + widget.winfo_height()
+            return left <= x_root <= left + widget.winfo_width() and top <= y_root <= top + widget.winfo_height()
         except Exception:
             return False
 
     def _bind_mirror_clicks(self):
-        """Any press on the mirror selects the element under it."""
+        """The click path that selected elements: screen position to the picture."""
         def press(event):
-            for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
-                if self._over(widget, event):
-                    return
-            canvas = self.phone_view.canvas
-            if not self._over(canvas, event):
-                return
-            src = getattr(event, "widget", None)
             try:
-                if src is canvas:
-                    x, y = float(event.x), float(event.y)
-                else:
-                    x = float(event.x) + src.winfo_rootx() - canvas.winfo_rootx()
-                    y = float(event.y) + src.winfo_rooty() - canvas.winfo_rooty()
+                x_root, y_root = event.x_root, event.y_root
             except Exception:
                 return
-            event.x, event.y = x, y
+            for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
+                if self._inside(widget, x_root, y_root):
+                    return
+            canvas = self.phone_view.canvas
+            if not self._inside(canvas, x_root, y_root):
+                return
+            event.x = x_root - canvas.winfo_rootx()
+            event.y = y_root - canvas.winfo_rooty()
             self.phone_view._on_press(event)
-            if self.current_element is None and self.phone_view.elements:
-                self._show_overlay("No element here")
 
         def release(event):
-            if self._over(self.add_btn, event) and not self._owned_by(event.widget, self.add_btn):
+            try:
+                x_root, y_root = event.x_root, event.y_root
+            except Exception:
+                return
+            if self._inside(self.add_btn, x_root, y_root) and not self._owned_by(event.widget, self.add_btn):
                 self._quick_rule()
                 return "break"
-            if self._over(self.run_btn, event) and not self._owned_by(event.widget, self.run_btn):
+            if self._inside(self.run_btn, x_root, y_root) and not self._owned_by(event.widget, self.run_btn):
                 self._toggle_rules()
                 return "break"
-            if self._over(self.close_btn, event) and not self._owned_by(event.widget, self.close_btn):
+            if self._inside(self.close_btn, x_root, y_root) and not self._owned_by(event.widget, self.close_btn):
                 self.destroy()
                 return "break"
 
+        self._press_select = press
         if not getattr(self, "_press_bound", False):
             self.bind_all("<Button-1>", press)
             self.bind_all("<ButtonRelease-1>", release)
             self._press_bound = True
-            self._release_bound = True
+
+        skip = {self.add_btn, self.run_btn, self.close_btn, self.device_menu}
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                if child in skip or any(self._owned_by(child, btn) for btn in skip):
+                    continue
+                try:
+                    if child.winfo_class() == "Canvas" and child is not self.phone_view.canvas:
+                        child.bind("<Button-1>", press)
+                except Exception:
+                    pass
+                walk(child)
+
+        walk(self.mirror_frame)
 
     def _display_scales(self, root: UIElement):
         """One scale for both axes, so a short button is never stretched tall."""
