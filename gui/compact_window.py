@@ -449,14 +449,6 @@ class CompactController(ctk.CTk):
     def _keep_clicks_on_mirror(self):
         self._raise_controls()
 
-    def _pointer_in(self, widget, event) -> bool:
-        try:
-            x, y = event.x_root, event.y_root
-            left, top = widget.winfo_rootx(), widget.winfo_rooty()
-            return left <= x <= left + widget.winfo_width() and top <= y <= top + widget.winfo_height()
-        except Exception:
-            return False
-
     def _owned_by(self, widget, owner) -> bool:
         while widget is not None:
             if widget == owner:
@@ -464,40 +456,55 @@ class CompactController(ctk.CTk):
             widget = getattr(widget, "master", None)
         return False
 
+    def _over(self, widget, event) -> bool:
+        """Hit test using one coordinate space. Do not mix x_root with winfo."""
+        try:
+            src = event.widget
+            x = float(event.x) + src.winfo_rootx()
+            y = float(event.y) + src.winfo_rooty()
+            left, top = widget.winfo_rootx(), widget.winfo_rooty()
+            return left <= x <= left + widget.winfo_width() and top <= y <= top + widget.winfo_height()
+        except Exception:
+            return False
+
     def _bind_mirror_clicks(self):
-        """Mirror clicks select an element. ADD and START keep their own clicks."""
-        def forward(event):
+        """Any press on the mirror selects the element under it."""
+        def press(event):
+            for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
+                if self._over(widget, event):
+                    return
             canvas = self.phone_view.canvas
+            if not self._over(canvas, event):
+                return
+            src = getattr(event, "widget", None)
             try:
-                x = event.x_root - canvas.winfo_rootx()
-                y = event.y_root - canvas.winfo_rooty()
+                if src is canvas:
+                    x, y = float(event.x), float(event.y)
+                else:
+                    x = float(event.x) + src.winfo_rootx() - canvas.winfo_rootx()
+                    y = float(event.y) + src.winfo_rooty() - canvas.winfo_rooty()
             except Exception:
                 return
-            if x < 0 or y < 0 or x > canvas.winfo_width() or y > canvas.winfo_height():
-                return
-            event.x = x
-            event.y = y
+            event.x, event.y = x, y
             self.phone_view._on_press(event)
+            if self.current_element is None and self.phone_view.elements:
+                self._show_overlay("No element here")
 
         def release(event):
-            # The rounded canvases sit on the buttons and eat the release.
-            # If the pointer is on a button that did not receive it, run it.
-            if self._pointer_in(self.add_btn, event) and not self._owned_by(event.widget, self.add_btn):
+            if self._over(self.add_btn, event) and not self._owned_by(event.widget, self.add_btn):
                 self._quick_rule()
                 return "break"
-            if self._pointer_in(self.run_btn, event) and not self._owned_by(event.widget, self.run_btn):
+            if self._over(self.run_btn, event) and not self._owned_by(event.widget, self.run_btn):
                 self._toggle_rules()
                 return "break"
-            if self._pointer_in(self.close_btn, event) and not self._owned_by(event.widget, self.close_btn):
+            if self._over(self.close_btn, event) and not self._owned_by(event.widget, self.close_btn):
                 self.destroy()
                 return "break"
 
-        for frame in (self.mirror_frame, self.phone_view):
-            bg = getattr(frame, "_canvas", None)
-            if bg is not None and bg is not self.phone_view.canvas:
-                bg.bind("<Button-1>", forward)
-        if not getattr(self, "_release_bound", False):
+        if not getattr(self, "_press_bound", False):
+            self.bind_all("<Button-1>", press)
             self.bind_all("<ButtonRelease-1>", release)
+            self._press_bound = True
             self._release_bound = True
 
     def _display_scales(self, root: UIElement):
@@ -538,8 +545,6 @@ class CompactController(ctk.CTk):
                 int(round(l * sx)), int(round(t * sy)),
                 int(round(r * sx)), int(round(b * sy)),
             )
-            if not el.clickable:
-                continue
             if el.bounds[1] >= view_h:
                 continue
             key = (

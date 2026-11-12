@@ -160,7 +160,7 @@ def flatten_elements(root: UIElement) -> List[UIElement]:
     return result
 
 
-def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int = 0):
+def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int = 0, clickable_only: bool = False):
     """Smallest clickable element whose own box contains the point.
 
     Non-clickable nodes are ignored. The point has to sit inside the real
@@ -171,7 +171,9 @@ def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int =
     pad = max(0, int(slop))
 
     for el in elements:
-        if getattr(el, "ignored", False) or not getattr(el, "clickable", False):
+        if getattr(el, "ignored", False):
+            continue
+        if clickable_only and not getattr(el, "clickable", False):
             continue
         l, t, r, b = el.bounds
         w = r - l

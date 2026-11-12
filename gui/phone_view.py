@@ -215,13 +215,9 @@ class PhoneView(ctk.CTkFrame):
         return None
 
     def _event_to_img(self, event) -> Tuple[int, int]:
-        """Map a click onto the picture that is actually drawn."""
-        try:
-            x = float(event.x_root - self.canvas.winfo_rootx())
-            y = float(event.y_root - self.canvas.winfo_rooty())
-        except Exception:
-            x = float(getattr(event, "x", 0))
-            y = float(getattr(event, "y", 0))
+        """event.x/y are already on this canvas."""
+        x = float(getattr(event, "x", 0))
+        y = float(getattr(event, "y", 0))
         if self._img_id is None or self.base_image is None or self.photo is None:
             return self._canvas_to_img(int(x), int(y))
         coords = self.canvas.coords(self._img_id)
@@ -246,7 +242,7 @@ class PhoneView(ctk.CTkFrame):
         img_w, img_h = self.base_image.size
         if ix < -20 or iy < -20 or ix > img_w + 20 or iy > img_h + 20:
             return
-        slop = 2
+        slop = 8
         chosen = pick_element(self.elements, ix, iy, img_w, img_h, slop=slop)
         if chosen is None:
             return
