@@ -521,6 +521,7 @@ class CompactController(ctk.CTk):
         if not getattr(self, "_press_bound", False):
             self.bind_all("<Button-1>", press)
             self.bind_all("<ButtonRelease-1>", release)
+            self.bind_class("Canvas", "<Button-1>", press, add="+")
             self._press_bound = True
 
         skip = {self.add_btn, self.run_btn, self.close_btn, self.device_menu}
@@ -536,7 +537,11 @@ class CompactController(ctk.CTk):
                     pass
                 walk(child)
 
-        walk(self.mirror_frame)
+        walk(self)
+        try:
+            self.phone_view.canvas.bind("<Button-1>", self.phone_view._on_press)
+        except Exception:
+            pass
 
     def _display_scales(self, root: UIElement):
         """Map dump pixels onto the screenshot using the root box, one scale for both axes."""

@@ -261,26 +261,45 @@ class PhoneView(ctk.CTkFrame):
         if not self.base_image or not self.elements:
             return
         img_w, img_h = self.base_image.size
-        best = None
-        best_area = None
-        for x, y in self._canvas_points(event):
+        ox, oy = 0.0, 0.0
+        if self._img_id is not None:
+            coords = self.canvas.coords(self._img_id) or ()
+            if len(coords) >= 2:
+                ox, oy = float(coords[0]), float(coords[1])
+
+        def hit(x: float, y: float):
             ix, iy = self._xy_to_img(x, y)
-            if ix < -30 or iy < -30 or ix > img_w + 30 or iy > img_h + 30:
-                continue
-            chosen = pick_element(self.elements, ix, iy, img_w, img_h, slop=12)
-            if chosen is None:
-                continue
-            area = max(1, chosen.width * chosen.height)
-            if best is None or area < best_area:
-                best = chosen
-                best_area = area
-        if best is None:
+            if ix < -40 or iy < -40 or ix > img_w + 40 or iy > img_h + 40:
+                return None
+            return pick_element(self.elements, ix, iy, img_w, img_h, slop=16)
+
+        points = self._canvas_points(event) or [(float(getattr(event, "x", 0)), float(getattr(event, "y", 0)))]
+        chosen = None
+        for x, y in points:
+            chosen = hit(x, y)
+            if chosen is not None:
+                break
+        if chosen is None:
+            for factor in (1.25, 1.5, 1.75, 2.0, 0.8, 0.67, 0.5):
+                for x, y in points:
+                    for sx, sy in (
+                        (x / factor, y / factor),
+                        (ox + (x - ox) / factor, oy + (y - oy) / factor),
+                    ):
+                        chosen = hit(sx, sy)
+                        if chosen is not None:
+                            break
+                    if chosen is not None:
+                        break
+                if chosen is not None:
+                    break
+        if chosen is None:
             return
-        self.selected = best
-        self.locked_bounds = tuple(best.bounds)
+        self.selected = chosen
+        self.locked_bounds = tuple(chosen.bounds)
         self._draw_locked_outline()
         if self.on_element_selected:
-            self.on_element_selected(best)
+            self.on_element_selected(chosen)
 
     def _on_drag(self, event):
         return
