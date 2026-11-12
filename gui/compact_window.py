@@ -126,8 +126,8 @@ class CompactController(ctk.CTk):
 
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
-            font=ctk.CTkFont(family="Poppins Condensed", size=20, weight="bold"),
-            fg_color="#1c1c1e", corner_radius=6,
+            font=ctk.CTkFont(family="Poppins Condensed", size=18, weight="bold"),
+            fg_color="#1c1c1e", corner_radius=6, justify="center",
         )
 
         self.bar = ctk.CTkFrame(self, height=BAR_H, fg_color=SURFACE, corner_radius=16)
@@ -562,14 +562,22 @@ class CompactController(ctk.CTk):
 
     def _on_element_selected(self, el: UIElement):
         self.current_element = el
+        raw = getattr(el, "_raw_bounds", None) or el.bounds
+        kind = (el.class_name or "Element").split(".")[-1]
+        ident = (el.resource_id.split("/")[-1] if el.resource_id else "") or el.text or el.content_desc or "no id"
+        shown = el.text or el.content_desc or ""
+        self._show_overlay(
+            f"{kind}\n{ident}\n{shown}\n[{raw[0]},{raw[1]}][{raw[2]},{raw[3]}]",
+            ms=4000,
+        )
 
-    def _show_overlay(self, text: str):
-        self.overlay.configure(text=(text or "").upper())
-        self.overlay.place(relx=0.5, rely=0.92, anchor="center")
+    def _show_overlay(self, text: str, ms: int = 1600):
+        self.overlay.configure(text=text or "")
+        self.overlay.place(relx=0.5, rely=0.9, anchor="center")
         self.overlay.lift()
         if self._overlay_job:
             self.after_cancel(self._overlay_job)
-        self._overlay_job = self.after(1600, self.overlay.place_forget)
+        self._overlay_job = self.after(ms, self.overlay.place_forget)
 
     def _forget_current(self):
         if not self.current_element:

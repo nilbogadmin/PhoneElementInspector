@@ -72,8 +72,8 @@ def _as_set(value) -> set:
 def tap_xy(el: UIElement, root: UIElement, wm_sizes: Sequence[Tuple[int, int]] = ()) -> Tuple[int, int]:
     """Center of this element in the coordinate space `input tap` expects."""
     els = flatten_elements(root)
-    hw = max((e.bounds[2] for e in els), default=1) or 1
-    hh = max((e.bounds[3] for e in els), default=1) or 1
+    hw = max((_box(e)[2] for e in els), default=1) or 1
+    hh = max((_box(e)[3] for e in els), default=1) or 1
     tw, th = hw, hh
     best = None
     best_score = None
@@ -91,22 +91,69 @@ def tap_xy(el: UIElement, root: UIElement, wm_sizes: Sequence[Tuple[int, int]] =
     if best is not None and best_score is not None and best_score[0] < 0.04:
         if abs(best[0] - hw) >= 4 or abs(best[1] - hh) >= 8:
             tw, th = best
-    cx, cy = el.center
+    raw = _box(el)
+    cx = (raw[0] + raw[2]) / 2.0
+    cy = (raw[1] + raw[3]) / 2.0
     return int(round(cx / hw * tw)), int(round(cy / hh * th))
+
+
+def _box(el: UIElement):
+    return getattr(el, "_raw_bounds", None) or el.bounds
 
 
 def screen_size(root: UIElement) -> Tuple[int, int]:
     els = flatten_elements(root)
-    width = max((e.bounds[2] for e in els), default=1) or 1
-    height = max((e.bounds[3] for e in els), default=1) or 1
+    width = max((_box(e)[2] for e in els), default=1) or 1
+    height = max((_box(e)[3] for e in els), default=1) or 1
     return width, height
 
 
 def in_top_half(el: UIElement, root: UIElement) -> bool:
     """The bottom half of the phone is never a click target."""
     _, height = screen_size(root)
-    cy = (el.bounds[1] + el.bounds[3]) / 2.0
+    raw = _box(el)
+    cy = (raw[1] + raw[3]) / 2.0
     return cy < height * 0.5
+
+
+def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 0.008) -> bool:
+    """True only when both boxes are the same element on the screen.
+
+    Edges are compared as a fraction of the screen, so a 2024 twin still
+    matches, and a text label sitting inside the control does not.
+    """
+    try:
+        sw, sh = float(saved_screen[0]), float(saved_screen[1])
+        lw, lh = float(live_screen[0]), float(live_screen[1])
+    except (TypeError, IndexError, ValueError):
+        return False
+    if min(sw, sh, lw, lh) < 50:
+        return False
+    saved = (
+        saved_bounds[0] / sw, saved_bounds[1] / sh,
+        saved_bounds[2] / sw, saved_bounds[3] / sh,
+    )
+    live = (
+        live_bounds[0] / lw, live_bounds[1] / lh,
+        live_bounds[2] / lw, live_bounds[3] / lh,
+    )
+    return all(abs(a - b) <= tol for a, b in zip(saved, live))
+
+
+def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
+    """The memorized record. Every field and the box have to match."""
+    if not saved or not el.clickable or not in_top_half(el, root):
+        return False
+    if (el.class_name or "") != (saved.get("class_name") or ""):
+        return False
+    if (el.resource_id or "") != (saved.get("resource_id") or ""):
+        return False
+    if (el.text or "") != (saved.get("text") or ""):
+        return False
+    if (el.content_desc or "") != (saved.get("content_desc") or ""):
+        return False
+    raw = _box(el)
+    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root))
 
 
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None) -> List[Tuple[int, int]]:

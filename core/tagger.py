@@ -51,15 +51,24 @@ class Tagger:
         # Bounds stay off the selector. Two phones of the same model are a few
         # pixels apart, and an exact box would miss every one but the trainer.
 
+        raw = getattr(element, "_raw_bounds", None) or element.bounds
         self.tags[tag_name] = {
             "selector": selector,
             "notes": notes,
-            "bounds_example": list(element.bounds),
+            "bounds_example": [int(v) for v in raw],
             "display_name": element.display_name,
             "family": list(family) if family else [],
             "serial": getattr(element, "_trained_serial", None) or "",
             "norm": list(norm) if norm else None,
             "screen": list(screen) if screen else None,
+            "exact": {
+                "class_name": element.class_name or "",
+                "resource_id": element.resource_id or "",
+                "text": element.text or "",
+                "content_desc": element.content_desc or "",
+                "bounds": [int(v) for v in raw],
+                "screen": list(screen) if screen else [1, 1],
+            },
         }
         element.tag = tag_name
         self.save()
@@ -86,44 +95,17 @@ class Tagger:
                 hit.notes = (self.tags.get(tag_name) or {}).get("notes", "")
 
     def find_for_click(self, root: UIElement, tag_name: str, family=None, serial=None) -> Optional[UIElement]:
-        """The added element only. Never a lookalike, and never the bottom half."""
-        from .match import same_family, in_top_half
+        """One memorized element. Anything that is not that exact box is ignored."""
+        from .match import exact_element
 
         data = self.tags.get(tag_name) or {}
-        if not data or not self._allowed(data, family, serial):
+        exact = data.get("exact")
+        if not exact or not self._allowed(data, family, serial):
             return None
-        selector = dict(data.get("selector") or {})
-        rid = selector.get("resource_id") or ""
-        text = selector.get("text") or ""
-        desc = selector.get("content_desc") or ""
-        cls = selector.get("class_name") or ""
-        if not (rid or text or desc or cls):
+        hits = [el for el in flatten_elements(root) if exact_element(exact, el, root)]
+        if len(hits) != 1:
             return None
-        els = [
-            el for el in flatten_elements(root)
-            if el.clickable and el.width > 1 and el.height > 1 and in_top_half(el, root)
-        ]
-        if rid:
-            els = [el for el in els if el.resource_id == rid]
-        else:
-            if text:
-                els = [el for el in els if el.text == text]
-            if desc:
-                els = [el for el in els if el.content_desc == desc]
-            if cls:
-                els = [el for el in els if el.class_name == cls]
-            # No id and no label: only the same spot, never every view of that class.
-            if not (text or desc) and not data.get("norm"):
-                return None
-        if cls and rid:
-            same_cls = [el for el in els if el.class_name == cls]
-            if same_cls:
-                els = same_cls
-        if not els:
-            return None
-        if len(els) == 1 and (rid or text or desc):
-            return els[0]
-        return self._closest(els, data, root, loose=bool(rid or text or desc))
+        return hits[0]
 
     def _allowed(self, data, family, serial) -> bool:
         from .match import same_family
