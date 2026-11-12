@@ -214,14 +214,30 @@ class PhoneView(ctk.CTkFrame):
     def _hit_handle(self, x: int, y: int) -> Optional[str]:
         return None
 
-    def _event_to_img(self, event) -> Tuple[int, int]:
-        """Screen coordinates. This is the mapping that selected elements on the PC."""
+    def _canvas_points(self, event):
+        """Every way Windows reports a click. One of them is in canvas pixels."""
+        pts = []
+        widget = getattr(event, "widget", None)
+        if widget is self.canvas:
+            pts.append((float(getattr(event, "x", 0)), float(getattr(event, "y", 0))))
         try:
-            x = float(event.x_root - self.canvas.winfo_rootx())
-            y = float(event.y_root - self.canvas.winfo_rooty())
+            src = event.widget
+            pts.append((
+                float(event.x) + src.winfo_rootx() - self.canvas.winfo_rootx(),
+                float(event.y) + src.winfo_rooty() - self.canvas.winfo_rooty(),
+            ))
         except Exception:
-            x = float(getattr(event, "x", 0))
-            y = float(getattr(event, "y", 0))
+            pass
+        try:
+            pts.append((
+                float(event.x_root - self.canvas.winfo_rootx()),
+                float(event.y_root - self.canvas.winfo_rooty()),
+            ))
+        except Exception:
+            pass
+        return pts
+
+    def _xy_to_img(self, x: float, y: float) -> Tuple[int, int]:
         if self._img_id is None or self.base_image is None or self.photo is None:
             return self._canvas_to_img(int(x), int(y))
         coords = self.canvas.coords(self._img_id)
@@ -234,27 +250,37 @@ class PhoneView(ctk.CTkFrame):
         iy = (y - float(coords[1])) / ph * img_h
         return int(round(ix)), int(round(iy))
 
+    def _event_to_img(self, event) -> Tuple[int, int]:
+        pts = self._canvas_points(event)
+        if not pts:
+            return 0, 0
+        return self._xy_to_img(*pts[0])
+
     def _on_press(self, event):
         self._drag_handle = None
-        try:
-            self.canvas.focus_set()
-        except Exception:
-            pass
         if not self.base_image or not self.elements:
             return
-        ix, iy = self._event_to_img(event)
         img_w, img_h = self.base_image.size
-        if ix < -20 or iy < -20 or ix > img_w + 20 or iy > img_h + 20:
+        best = None
+        best_area = None
+        for x, y in self._canvas_points(event):
+            ix, iy = self._xy_to_img(x, y)
+            if ix < -30 or iy < -30 or ix > img_w + 30 or iy > img_h + 30:
+                continue
+            chosen = pick_element(self.elements, ix, iy, img_w, img_h, slop=12)
+            if chosen is None:
+                continue
+            area = max(1, chosen.width * chosen.height)
+            if best is None or area < best_area:
+                best = chosen
+                best_area = area
+        if best is None:
             return
-        slop = 8
-        chosen = pick_element(self.elements, ix, iy, img_w, img_h, slop=slop)
-        if chosen is None:
-            return
-        self.selected = chosen
-        self.locked_bounds = tuple(chosen.bounds)
+        self.selected = best
+        self.locked_bounds = tuple(best.bounds)
         self._draw_locked_outline()
         if self.on_element_selected:
-            self.on_element_selected(chosen)
+            self.on_element_selected(best)
 
     def _on_drag(self, event):
         return

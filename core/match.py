@@ -116,7 +116,7 @@ def in_top_half(el: UIElement, root: UIElement) -> bool:
     return cy < height * 0.5
 
 
-def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 0.008) -> bool:
+def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 0.015) -> bool:
     """True only when both boxes are the same element on the screen.
 
     Edges are compared as a fraction of the screen, so a 2024 twin still
@@ -142,7 +142,7 @@ def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 
 
 def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
     """The memorized record. Every field and the box have to match."""
-    if not saved or not el.clickable or not in_top_half(el, root):
+    if not saved or not in_top_half(el, root):
         return False
     if (el.class_name or "") != (saved.get("class_name") or ""):
         return False

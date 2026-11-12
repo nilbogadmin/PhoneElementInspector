@@ -466,18 +466,24 @@ class CompactController(ctk.CTk):
     def _bind_mirror_clicks(self):
         """The click path that selected elements: screen position to the picture."""
         def press(event):
-            try:
-                x_root, y_root = event.x_root, event.y_root
-            except Exception:
+            widget = getattr(event, "widget", None)
+            buttons = (self.add_btn, self.run_btn, self.close_btn, self.device_menu)
+            if widget is not None and any(self._owned_by(widget, btn) for btn in buttons):
                 return
-            for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
-                if self._inside(widget, x_root, y_root):
-                    return
             canvas = self.phone_view.canvas
-            if not self._inside(canvas, x_root, y_root):
+            on_mirror = widget is canvas or self._owned_by(widget, self.mirror_frame) or self._owned_by(widget, self.phone_view)
+            over = False
+            try:
+                over = self._inside(canvas, event.x_root, event.y_root)
+            except Exception:
+                over = False
+            if not over and widget is not None:
+                try:
+                    over = self._inside(canvas, event.x + widget.winfo_rootx(), event.y + widget.winfo_rooty())
+                except Exception:
+                    over = False
+            if not on_mirror and not over:
                 return
-            event.x = x_root - canvas.winfo_rootx()
-            event.y = y_root - canvas.winfo_rooty()
             self.phone_view._on_press(event)
 
         def release(event):
@@ -517,17 +523,15 @@ class CompactController(ctk.CTk):
         walk(self.mirror_frame)
 
     def _display_scales(self, root: UIElement):
-        """One scale for both axes, so a short button is never stretched tall."""
+        """Map dump pixels onto the screenshot using the root box, one scale for both axes."""
         full = getattr(self.device, "display_full_size", None) or (0, 0)
         capture = getattr(self.device, "capture_size", None) or full
         px = float(getattr(self.device, "px_scale", 1) or 1)
-        space_w = 0
-        for el in flatten_elements(root):
-            raw = getattr(el, "_raw_bounds", None) or el.bounds
-            space_w = max(space_w, int(raw[2]))
+        raw = getattr(root, "_raw_bounds", None) or root.bounds
+        root_w = max(1, int(raw[2] - raw[0]))
         cap_w = int(capture[0] or full[0] or 0)
-        if space_w > 50 and cap_w > 50:
-            scale = px * (cap_w / float(space_w))
+        if root_w > 50 and cap_w > 50:
+            scale = px * (cap_w / float(root_w))
             return (scale, scale)
         return (px, px)
 
