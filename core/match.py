@@ -140,31 +140,26 @@ def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 
 
 
 def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
-    """The control that was added. Icons often have no text and no id."""
+    """Same class, id, text, description, and box. A neighbor does not qualify."""
     if not saved or not in_top_half(el, root):
         return False
-    rid = saved.get("resource_id") or ""
-    text = saved.get("text") or ""
-    desc = saved.get("content_desc") or ""
-    cls = (saved.get("class_name") or "").rsplit(".", 1)[-1]
-    el_cls = (el.class_name or "").rsplit(".", 1)[-1]
+    if (el.class_name or "") != (saved.get("class_name") or ""):
+        return False
+    if (el.resource_id or "") != (saved.get("resource_id") or ""):
+        return False
+    if (el.text or "") != (saved.get("text") or ""):
+        return False
+    if (el.content_desc or "") != (saved.get("content_desc") or ""):
+        return False
     raw = _box(el)
-    if not same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.06 if rid else 0.045):
-        return False
-    if rid:
-        return (el.resource_id or "") == rid
-    if cls and el_cls and cls != el_cls:
-        return False
-    if text and (el.text or "") and (el.text or "") != text:
-        return False
-    if desc and (el.content_desc or "") and (el.content_desc or "") != desc:
-        return False
-    return True
+    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.02)
 
 
-def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None) -> List[Tuple[int, int]]:
-    """Taps for elements the user added. Nothing else, and never the bottom half."""
+def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None, hold=None):
+    """New taps only. A tag already on screen is not tapped again."""
+    held = set(hold or ())
     taps: List[Tuple[int, int]] = []
+    seen: List[str] = []
     for rule in rules:
         if not rule.get("enabled", True):
             continue
@@ -174,8 +169,16 @@ def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm
         for cond in rule.get("conditions") or []:
             if cond.get("type") != "element_visible":
                 continue
-            el = tagger.find_for_click(root, cond.get("tag"), family=family, serial=serial)
+            tag = cond.get("tag") or ""
+            el = tagger.find_for_click(root, tag, family=family, serial=serial)
             if el is None or not in_top_half(el, root):
                 continue
-            taps.append(tap_xy(el, root, wm_sizes))
-    return taps
+            if tag:
+                seen.append(tag)
+            if tag in held:
+                continue
+            x, y = tap_xy(el, root, wm_sizes)
+            if any(abs(x - a) <= 24 and abs(y - b) <= 24 for a, b in taps):
+                continue
+            taps.append((x, y))
+    return taps, seen

@@ -77,6 +77,7 @@ class CompactController(ctk.CTk):
         self._xml_hash = None
         self._mapped_scale = None
         self._dev_sig = None
+        self._held = {}
         self._overlay_job = None
 
         self._build_ui()
@@ -151,6 +152,13 @@ class CompactController(ctk.CTk):
             command=self._toggle_rules, font=btn_font,
         )
         self.run_btn.pack(side="left", padx=6)
+
+        self.reset_btn = ctk.CTkButton(
+            self._bar_inner, text="RESET", width=btn_w, height=btn_h, corner_radius=10,
+            fg_color=SURFACE2, hover_color="#3a3a3c",
+            command=self._reset_rules, font=btn_font,
+        )
+        self.reset_btn.pack(side="left", padx=6)
 
     def _window_height(self) -> int:
         mirror_h = int(BAR_W * PHONE_ASPECT)
@@ -446,7 +454,7 @@ class CompactController(ctk.CTk):
                 bg.lower()
             except Exception:
                 pass
-        for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
+        for widget in (self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu):
             try:
                 widget.lift()
             except Exception:
@@ -455,7 +463,7 @@ class CompactController(ctk.CTk):
             self.phone_view.canvas.lift()
         except Exception:
             pass
-        for widget in (self.add_btn, self.run_btn, self.close_btn, self.device_menu):
+        for widget in (self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu):
             try:
                 widget.lift()
             except Exception:
@@ -483,7 +491,7 @@ class CompactController(ctk.CTk):
         """The click path that selected elements: screen position to the picture."""
         def press(event):
             widget = getattr(event, "widget", None)
-            buttons = (self.add_btn, self.run_btn, self.close_btn, self.device_menu)
+            buttons = (self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu)
             if widget is not None and any(self._owned_by(widget, btn) for btn in buttons):
                 return
             canvas = self.phone_view.canvas
@@ -513,6 +521,9 @@ class CompactController(ctk.CTk):
             if self._inside(self.run_btn, x_root, y_root) and not self._owned_by(event.widget, self.run_btn):
                 self._toggle_rules()
                 return "break"
+            if self._inside(self.reset_btn, x_root, y_root) and not self._owned_by(event.widget, self.reset_btn):
+                self._reset_rules()
+                return "break"
             if self._inside(self.close_btn, x_root, y_root) and not self._owned_by(event.widget, self.close_btn):
                 self.destroy()
                 return "break"
@@ -524,7 +535,7 @@ class CompactController(ctk.CTk):
             self.bind_class("Canvas", "<Button-1>", press, add="+")
             self._press_bound = True
 
-        skip = {self.add_btn, self.run_btn, self.close_btn, self.device_menu}
+        skip = {self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu}
 
         def walk(widget):
             for child in widget.winfo_children():
@@ -675,6 +686,20 @@ class CompactController(ctk.CTk):
         })
         self._show_overlay(f"Added {name}")
 
+    def _reset_rules(self):
+        self.rules.apps = {"demo": {"rules": [], "crop": None}}
+        self.rules.active_package = "demo"
+        self.rules.save()
+        self.tagger.tags.clear()
+        self.tagger.save()
+        self._held = {}
+        self.current_element = None
+        self.phone_view.clear_selection()
+        self._tree_sig_val = None
+        if self.root_element is not None:
+            self._apply_hierarchy(self.root_element)
+        self._show_overlay("Cleared")
+
     def _toggle_rules(self):
         if self._rules_running:
             self._stop_rules()
@@ -754,9 +779,11 @@ class CompactController(ctk.CTk):
         from core.match import clicks_for_device
         family = self.device.identity(serial).get("family") or []
         wm = self.device.wm_for(serial)
-        taps = clicks_for_device(
-            self.tagger, self.rules.rules, root, family, wm, serial=serial
+        taps, seen = clicks_for_device(
+            self.tagger, self.rules.rules, root, family, wm, serial=serial,
+            hold=self._held.get(serial),
         )
+        self._held[serial] = set(seen)
         for x, y in taps:
             try:
                 d.click(int(x), int(y))
