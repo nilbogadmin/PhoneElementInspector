@@ -39,6 +39,7 @@ jobs:
           pyinstaller --noconfirm --clean --onefile --windowed --name PhoneElementInspector `
             --add-data "demo;demo" `
             --add-data "data;data" `
+            --add-data "vendor;vendor" `
             --add-binary "platform-tools/adb.exe;." `
             --add-binary "platform-tools/AdbWinApi.dll;." `
             --add-binary "platform-tools/AdbWinUsbApi.dll;." `
@@ -47,6 +48,7 @@ jobs:
             --collect-all adbutils `
             --collect-all PIL `
             --collect-all playwright `
+            --collect-all av `
             --hidden-import PIL._tkinter_finder `
             --hidden-import lxml.etree `
             main.py

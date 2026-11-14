@@ -55,10 +55,13 @@ class PhoneView(ctk.CTkFrame):
 
     def set_frame(self, screenshot: Image.Image):
         """New mirror pixels only. Does not touch elements or the selection."""
-        if screenshot is self.base_image:
+        try:
+            if screenshot is None or screenshot is self.base_image:
+                return
+            self.base_image = screenshot.copy()
+            self._present()
+        except Exception:
             return
-        self.base_image = screenshot
-        self._present()
 
     def set_elements(self, elements: List[UIElement]):
         """New hit targets. Called only when the UI hierarchy changes."""

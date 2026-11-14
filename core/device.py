@@ -3,6 +3,7 @@
 from __future__ import annotations
 import io
 import threading
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 from PIL import Image, ImageDraw
@@ -34,6 +35,7 @@ class DeviceConnector:
         self._frame_callback = None
         self._switching = False
         self.frame_serial = None
+        self._video_failed = None
 
     def connect(self) -> str:
         """Try real ADB first; fall back to demo only if nothing is connected."""
@@ -174,22 +176,47 @@ class DeviceConnector:
 
     def _capture_loop(self):
         while self._cap_running:
-            if self._switching or self.demo_mode or not self.device:
+            if self._switching or self.demo_mode or not self.device or not self.serial:
                 threading.Event().wait(0.2)
                 continue
-            try:
-                serial = self.serial
-                img = self._adb_screencap()
-                if img is None or self.serial != serial or self._switching:
-                    threading.Event().wait(0.15)
+            serial = self.serial
+            if self._video_failed != serial:
+                yielded = False
+                try:
+                    from .fast_mirror import iter_mirror
+                    for img in iter_mirror(serial, lambda: self._cap_running and not self._switching and self.serial == serial):
+                        yielded = True
+                        if self.serial != serial or self._switching:
+                            break
+                        self._publish_frame(img, serial)
+                    if not yielded and self._cap_running and self.serial == serial and not self._switching:
+                        self._video_failed = serial
+                        from .log import log
+                        log("mirror video unavailable")
                     continue
-                self._set_display(img)
-                self.frame_serial = serial
-                if self._frame_callback:
-                    self._frame_callback(self.last_screenshot)
-                threading.Event().wait(0.45)
+                except Exception as exc:
+                    if not yielded:
+                        self._video_failed = serial
+                    try:
+                        from .log import log
+                        log(f"mirror video failed {exc}")
+                    except Exception:
+                        pass
+                    threading.Event().wait(0.4)
+                    continue
+            try:
+                img = self._adb_screencap()
+                if img is not None and self.serial == serial and not self._switching:
+                    self._publish_frame(img, serial)
             except Exception:
-                threading.Event().wait(0.15)
+                pass
+            threading.Event().wait(0.2)
+
+    def _publish_frame(self, img, serial: str) -> None:
+        self._set_display(img)
+        self.frame_serial = serial
+        if self._frame_callback:
+            self._frame_callback(self.last_screenshot)
 
     def _refresh_real(self) -> str:
         if not self.device:
@@ -268,19 +295,20 @@ class DeviceConnector:
             return target.dump_hierarchy()
 
     def _adb_screencap(self) -> Optional[Image.Image]:
-        """Pure adb screencap into memory – no temp files."""
+        """One screenshot. Used only if the video mirror cannot start."""
         try:
-            import adbutils
+            import shutil
+            import subprocess
+            adb = shutil.which("adb") or "adb"
+            cmd = [adb]
             if self.serial:
-                d = adbutils.adb.device(serial=self.serial)
-            else:
-                d = adbutils.adb.device()
-            data = d.shell("screencap -p", encoding=None)
+                cmd += ["-s", self.serial]
+            cmd += ["exec-out", "screencap", "-p"]
+            flags = {"creationflags": 0x08000000} if __import__("sys").platform == "win32" else {}
+            data = subprocess.check_output(cmd, timeout=8, **flags)
             if not data:
                 return None
-            # Some devices prefix a useless header; strip if needed
             if data[:4] != b"\x89PNG":
-                # try finding PNG signature
                 idx = data.find(b"\x89PNG")
                 if idx >= 0:
                     data = data[idx:]
