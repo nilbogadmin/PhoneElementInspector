@@ -749,6 +749,13 @@ class CompactController(ctk.CTk):
                     over = False
             if not on_mirror and not over:
                 return
+            if widget is not canvas:
+                try:
+                    event.x = float(event.x_root) - canvas.winfo_rootx()
+                    event.y = float(event.y_root) - canvas.winfo_rooty()
+                    event.widget = canvas
+                except Exception:
+                    return
             self.phone_view._on_press(event)
 
         def release(event):

@@ -264,11 +264,6 @@ class PhoneView(ctk.CTkFrame):
         if not self.base_image or not self.elements:
             return
         img_w, img_h = self.base_image.size
-        ox, oy = 0.0, 0.0
-        if self._img_id is not None:
-            coords = self.canvas.coords(self._img_id) or ()
-            if len(coords) >= 2:
-                ox, oy = float(coords[0]), float(coords[1])
 
         def hit(x: float, y: float):
             ix, iy = self._xy_to_img(x, y)
@@ -277,25 +272,19 @@ class PhoneView(ctk.CTkFrame):
             return pick_element(self.elements, ix, iy, img_w, img_h, slop=16)
 
         points = self._canvas_points(event) or [(float(getattr(event, "x", 0)), float(getattr(event, "y", 0)))]
+        if getattr(event, "widget", None) is self.canvas:
+            points = points[:1]
         chosen = None
+        chosen_area = None
         for x, y in points:
-            chosen = hit(x, y)
-            if chosen is not None:
-                break
-        if chosen is None:
-            for factor in (1.25, 1.5, 1.75, 2.0, 0.8, 0.67, 0.5):
-                for x, y in points:
-                    for sx, sy in (
-                        (x / factor, y / factor),
-                        (ox + (x - ox) / factor, oy + (y - oy) / factor),
-                    ):
-                        chosen = hit(sx, sy)
-                        if chosen is not None:
-                            break
-                    if chosen is not None:
-                        break
-                if chosen is not None:
-                    break
+            hit_el = hit(x, y)
+            if hit_el is None:
+                continue
+            l, t, r, b = hit_el.bounds
+            area = max(0, r - l) * max(0, b - t)
+            if chosen is None or area < chosen_area:
+                chosen = hit_el
+                chosen_area = area
         if chosen is None:
             return
         self.selected = chosen
