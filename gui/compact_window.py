@@ -7,6 +7,7 @@ from __future__ import annotations
 import random
 import hashlib
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import messagebox
@@ -375,19 +376,24 @@ class CompactController(ctk.CTk):
             self._frame_pending = False
 
     def _consume_frame(self):
-        """Picture only. Element boxes stay until the hierarchy actually changes."""
-        self._frame_pending = False
-        img = self.device.last_screenshot
-        if img is None:
-            return
-        self.phone_view.set_frame(img)
-        if self.root_element is None and self.device.last_hierarchy is not None:
-            self._apply_hierarchy(self.device.last_hierarchy)
-        elif self.root_element is not None:
-            scales = self._display_scales(self.root_element)
-            if scales != self._mapped_scale:
-                self._apply_hierarchy(self.root_element)
-        self._raise_controls()
+        """One picture at a time. Do not queue a new frame until this one is drawn."""
+        try:
+            img = self.device.last_screenshot
+            if img is None:
+                return
+            self.phone_view.set_frame(img)
+            if self.root_element is None and self.device.last_hierarchy is not None:
+                self._apply_hierarchy(self.device.last_hierarchy)
+            elif self.root_element is not None:
+                scales = self._display_scales(self.root_element)
+                if scales != self._mapped_scale:
+                    self._apply_hierarchy(self.root_element)
+            now = time.monotonic()
+            if now - getattr(self, "_raised_at", 0) > 2:
+                self._raised_at = now
+                self._raise_controls()
+        finally:
+            self._frame_pending = False
 
     def _hier_tick(self):
         if (
@@ -395,6 +401,7 @@ class CompactController(ctk.CTk):
             and not self.device.demo_mode
             and not self._hier_busy
             and not self._pause_hier
+            and not self._rules_running
             and self.device.device is not None
         ):
             self._hier_busy = True
@@ -758,7 +765,7 @@ class CompactController(ctk.CTk):
             self._show_overlay("No devices")
         elif hits:
             self._show_overlay(f"{hits} clicks")
-        self._rules_job = self.after(200, self._rules_tick)
+        self._rules_job = self.after(1200, self._rules_tick)
 
     def _fire_device(self, serial: str) -> int:
         import uiautomator2 as u2

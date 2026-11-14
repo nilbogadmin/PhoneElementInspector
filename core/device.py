@@ -187,6 +187,7 @@ class DeviceConnector:
                 self.frame_serial = serial
                 if self._frame_callback:
                     self._frame_callback(self.last_screenshot)
+                threading.Event().wait(0.45)
             except Exception:
                 threading.Event().wait(0.15)
 
