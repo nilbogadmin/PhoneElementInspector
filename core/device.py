@@ -74,7 +74,8 @@ class DeviceConnector:
                 self.device = None
                 self.serial = None
                 return "No ADB device found"
-            first = devices[0].serial
+            trainers = self.list_devices()
+            first = trainers[0][0] if trainers else devices[0].serial
             self.serial = first
             self.device = u2.connect(first)
             info = self.device.info
@@ -89,14 +90,16 @@ class DeviceConnector:
             return f"ADB unavailable ({e})"
 
     def list_devices(self) -> list:
-        """Return [(serial, label), ...] for every connected phone."""
+        """The training menu: first 2024 and first 2025 only."""
         import adbutils
-        rows = []
+        from .match import model_year, trainer_picks
+
+        found = []
         for d in adbutils.adb.device_list():
-            serial = d.serial
-            ident = self.identity(serial)
-            rows.append((serial, ident.get("label") or serial))
-        return rows
+            ident = self.identity(d.serial)
+            year = model_year(ident.get("label") or "", *(ident.get("family") or []))
+            found.append((d.serial, year))
+        return trainer_picks(found)
 
     def identity(self, serial: Optional[str] = None) -> dict:
         """Marketing name plus the aliases shared by every phone of that model."""

@@ -49,6 +49,31 @@ def family_aliases(*parts: str) -> List[str]:
     return sorted(aliases)
 
 
+def model_year(*parts: str) -> str:
+    """2024 or 2025 when the phone says so. Otherwise blank."""
+    text = " ".join(p for p in parts if p).lower()
+    if "2024" in text:
+        return "2024"
+    if "2025" in text:
+        return "2025"
+    xt = re.search(r"xt\s*(\d{2})", text)
+    if xt and xt.group(1) in ("24", "25"):
+        return "20" + xt.group(1)
+    return ""
+
+
+def trainer_picks(rows):
+    """First 2024 and first 2025 only, in that order.
+
+    rows are (serial, year). Anything else is left out of the training menu.
+    """
+    found = {}
+    for serial, year in rows:
+        if year in ("2024", "2025") and year not in found:
+            found[year] = serial
+    return [(found[year], year) for year in ("2024", "2025") if year in found]
+
+
 def same_family(rule_family, device_family) -> bool:
     """A rule only runs on phones of the same model.
 
