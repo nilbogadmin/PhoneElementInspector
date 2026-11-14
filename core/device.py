@@ -36,6 +36,7 @@ class DeviceConnector:
         self._switching = False
         self.frame_serial = None
         self._video_failed = None
+        self._mirror_lock = threading.Lock()
 
     def connect(self) -> str:
         """Try real ADB first; fall back to demo only if nothing is connected."""
@@ -145,6 +146,8 @@ class DeviceConnector:
         self._switching = True
         self.serial = serial
         self.last_hierarchy = None
+        if self._mirror_lock.acquire(timeout=4):
+            self._mirror_lock.release()
         try:
             self.device = u2.connect(serial)
             self.demo_mode = False
@@ -184,11 +187,12 @@ class DeviceConnector:
                 yielded = False
                 try:
                     from .fast_mirror import iter_mirror
-                    for img in iter_mirror(serial, lambda: self._cap_running and not self._switching and self.serial == serial):
-                        yielded = True
-                        if self.serial != serial or self._switching:
-                            break
-                        self._publish_frame(img, serial)
+                    with self._mirror_lock:
+                        for img in iter_mirror(serial, lambda: self._cap_running and not self._switching and self.serial == serial):
+                            yielded = True
+                            if self.serial != serial or self._switching:
+                                break
+                            self._publish_frame(img, serial)
                     if not yielded and self._cap_running and self.serial == serial and not self._switching:
                         self._video_failed = serial
                         from .log import log

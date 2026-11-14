@@ -503,7 +503,10 @@ class CompactController(ctk.CTk):
         self._mapped_scale = None
         self._xml_hash = None
         self.current_element = None
+        self.root_element = None
+        self.phone_view.set_elements([])
         self.phone_view.clear_selection()
+        self._release_input_grab()
         self._show_overlay(label)
         threading.Thread(target=self._switch_device, args=(serial,), daemon=True).start()
 
@@ -522,25 +525,56 @@ class CompactController(ctk.CTk):
         except Exception:
             self._pause_hier = False
 
+    def _release_input_grab(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        menu = getattr(self.device_menu, "_dropdown_menu", None)
+        if menu is not None:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+            try:
+                menu.withdraw()
+            except Exception:
+                pass
+        try:
+            self.focus_force()
+        except Exception:
+            pass
+
     def _after_switch(self):
         self._pause_hier = False
         serial = self.device.serial
         if serial:
             self.device.family = list(self.device.identity(serial).get("family") or [])
         self.current_element = None
-        self.phone_view.clear_selection()
+        self.root_element = None
         self._tree_sig_val = None
         self._mapped_scale = None
         self._show_current()
+        if self.device.last_hierarchy is None:
+            threading.Thread(target=self._dump_after_switch, daemon=True).start()
+        self._release_input_grab()
         self._raise_controls()
+        self.after(250, self._raise_controls)
+        log(f"switch {serial} elements={'yes' if self.device.last_hierarchy is not None else 'no'}")
+
+    def _dump_after_switch(self):
+        serial = self.device.serial
         try:
-            self.grab_release()
-        except Exception:
-            pass
-        try:
-            self.focus_force()
-        except Exception:
-            pass
+            xml = self.device._dump_xml()
+            if not xml or self.device.serial != serial:
+                return
+            from core.hierarchy import parse_hierarchy_xml
+            root = parse_hierarchy_xml(xml)
+            self.device.last_hierarchy = root
+            self.after(0, lambda r=root, s=serial: self._apply_if_same_device(r, s))
+            log(f"switch dump {serial}")
+        except Exception as exc:
+            log(f"switch dump failed {exc}")
 
     def _show_current(self):
         img = self.device.last_screenshot
