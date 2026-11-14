@@ -35,7 +35,7 @@ def _boot() -> None:
                 shutil.copy2(src, dst)
         os.environ["PATH"] = str(root) + os.pathsep + os.environ.get("PATH", "")
         (root / "data").mkdir(exist_ok=True)
-        for name in ("tags.json", "rules.json"):
+        for name in ("tags.json", "rules.json", "guide.json"):
             src = bundled / "data" / name
             dst = root / "data" / name
             if src.exists() and not dst.exists():

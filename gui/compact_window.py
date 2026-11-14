@@ -6,6 +6,7 @@ Mirror only shows when exactly one device is connected.
 from __future__ import annotations
 import random
 import hashlib
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,7 @@ from core.element import UIElement, flatten_elements
 from core.paths import app_dir
 from core.log import log
 from gui.phone_view import PhoneView
+from gui.chromium_guide import ChromiumGuide
 
 BG = "#121214"
 SURFACE = "#1c1c1e"
@@ -35,6 +37,9 @@ BAR_H = 84
 DROP_H = 48
 HEAD_H = 42
 PHONE_ASPECT = (19.5 / 9) * 0.5   # half height for top-half only
+GUIDE_H = 380
+URL_H = 36
+SLOT_H = 52
 
 
 class CompactController(ctk.CTk):
@@ -81,6 +86,11 @@ class CompactController(ctk.CTk):
         self._dev_sig = None
         self._held = {}
         self._overlay_job = None
+        self.guide_slots = self._load_slots()
+        self.chromium = None
+        self._whatnot_status = {}
+        self._whatnot_busy = False
+        self._whatnot_at = 0.0
 
         self._build_ui()
         self._place_center()
@@ -103,6 +113,37 @@ class CompactController(ctk.CTk):
             fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
         )
         self.close_btn.pack(side="right", padx=6, pady=4)
+
+        self.url_bar = ctk.CTkFrame(self, height=URL_H, fg_color=SURFACE, corner_radius=8)
+        self.url_bar.pack(fill="x", side="top", pady=(0, 4))
+        self.url_bar.pack_propagate(False)
+        self.url_entry = ctk.CTkEntry(
+            self.url_bar, height=28, corner_radius=6,
+            fg_color=SURFACE2, border_width=0,
+            font=menu_font, placeholder_text="SIGN IN PAGE",
+        )
+        self.url_entry.pack(fill="x", padx=8, pady=4)
+        self.url_entry.bind("<Return>", self._open_guide_url)
+
+        self.guide_host = ctk.CTkFrame(self, height=GUIDE_H, fg_color="#000000", corner_radius=8)
+        self.guide_host.pack(fill="x", side="top", pady=(0, 4))
+        self.guide_host.pack_propagate(False)
+
+        self.slot_bar = ctk.CTkFrame(self, height=SLOT_H, fg_color=SURFACE, corner_radius=8)
+        self.slot_bar.pack(fill="x", side="top", pady=(0, 4))
+        self.slot_bar.pack_propagate(False)
+        slot_font = ctk.CTkFont(family="Poppins Condensed", size=14, weight="bold")
+        self.stream_btns = []
+        for i in range(6):
+            self.slot_bar.grid_columnconfigure(i, weight=1)
+            btn = ctk.CTkButton(
+                self.slot_bar, text=str(i + 1), height=40, corner_radius=8,
+                fg_color=RED, hover_color="#d32b22",
+                font=slot_font, command=lambda i=i: self._streamer_click(i),
+            )
+            btn.grid(row=0, column=i, sticky="ew", padx=3, pady=6)
+            btn.bind("<Button-3>", lambda _e, i=i: self._rename_streamer(i))
+            self.stream_btns.append(btn)
 
         self.mirror_frame = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=16)
 
@@ -165,7 +206,7 @@ class CompactController(ctk.CTk):
 
     def _window_height(self) -> int:
         mirror_h = int(BAR_W * PHONE_ASPECT)
-        return mirror_h + BAR_H + DROP_H + HEAD_H + 28
+        return mirror_h + BAR_H + DROP_H + HEAD_H + GUIDE_H + URL_H + SLOT_H + 40
 
     def _format_geo(self, x: int, y: int) -> str:
         """Fixed size. Negative coordinates must not become '+-10' or Tk throws."""
@@ -198,6 +239,7 @@ class CompactController(ctk.CTk):
         self.after(50, self._raise_controls)
         self.after(300, self._raise_controls)
         self._start_live()
+        self.after(600, self._start_guide)
 
     def _apply_geometry(self):
         x, y = self.winfo_x(), self.winfo_y()
@@ -229,10 +271,160 @@ class CompactController(ctk.CTk):
         x = event.x_root - self._drag_x
         y = event.y_root - self._drag_y
         self.geometry(self._format_geo(x, y))
+        self._sync_guide()
+
+    def _load_slots(self):
+        path = app_dir() / "data" / "guide.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            names = list(data.get("names") or [])
+        except Exception:
+            data = {}
+            names = []
+        names = (names + [""] * 6)[:6]
+        if not any(names):
+            names = ["krakenhits", "novatcg", "woosleys", "vendturesvault", "traderbea", "edcplug"]
+        self._guide_url = data.get("url") or "https://www.whatnot.com"
+        return names
+
+    def _save_slots(self):
+        path = app_dir() / "data" / "guide.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "url": self.url_entry.get().strip() if hasattr(self, "url_entry") else self._guide_url,
+            "names": self.guide_slots,
+        }, indent=2), encoding="utf-8")
+
+    def _start_guide(self):
+        if self.url_entry.get().strip() == "" and self._guide_url:
+            self.url_entry.insert(0, self._guide_url)
+        self._paint_streamers()
+        self.chromium = ChromiumGuide()
+        self.chromium.set_names(self.guide_slots)
+        if self._guide_url:
+            self.chromium.goto(self._guide_url)
+        self._sync_guide()
+        log("guide on")
+
+    def _sync_guide(self):
+        if not self.chromium:
+            return
+        try:
+            self.update_idletasks()
+            host = self.guide_host
+            self.chromium.move(host.winfo_rootx(), host.winfo_rooty(), host.winfo_width(), host.winfo_height())
+        except Exception:
+            pass
+
+    def _open_guide_url(self, _event=None):
+        url = self.url_entry.get().strip()
+        self._guide_url = url
+        self._save_slots()
+        if self.chromium and url:
+            self.chromium.goto(url)
+            self._show_overlay("Opening")
+
+    def _rename_streamer(self, index: int):
+        top = ctk.CTkToplevel(self)
+        top.overrideredirect(True)
+        top.attributes("-topmost", True)
+        top.configure(fg_color=SURFACE)
+        top.geometry("280x90")
+        entry = ctk.CTkEntry(top, height=32, fg_color=SURFACE2, border_width=0)
+        entry.insert(0, self.guide_slots[index] or "")
+        entry.pack(fill="x", padx=10, pady=(12, 6))
+        def save(_e=None):
+            self.guide_slots[index] = entry.get().strip()
+            self._save_slots()
+            if self.chromium:
+                self.chromium.set_names(self.guide_slots)
+            top.destroy()
+            self._paint_streamers()
+        entry.bind("<Return>", save)
+        ctk.CTkButton(top, text="SAVE", height=28, fg_color=GREEN, command=save).pack(pady=(0, 8))
+        top.update_idletasks()
+        x = self.winfo_rootx() + 40
+        y = self.slot_bar.winfo_rooty() + 4
+        top.geometry(f"280x90+{x}+{y}")
+        entry.focus_set()
+
+    def _streamer_click(self, index: int):
+        name = self.guide_slots[index]
+        if not name:
+            self._rename_streamer(index)
+            return
+        info = self._streamer_info(name)
+        if not info.get("online") or not info.get("url"):
+            self._show_overlay("Offline")
+            return
+        url = info["url"]
+        log(f"send {name} {url}")
+        threading.Thread(target=self._send_stream, args=(url, name), daemon=True).start()
+
+    def _send_stream(self, url: str, name: str):
+        from core.stream_link import safe_url
+        url = safe_url(url)
+        if not url:
+            self.after(0, lambda: self._show_overlay("Bad link"))
+            return
+        try:
+            import adbutils
+            devices = adbutils.adb.device_list()
+        except Exception:
+            devices = []
+        sent = 0
+        for device in devices:
+            try:
+                device.shell("am start -a android.intent.action.VIEW -d " + url)
+                sent += 1
+            except Exception as exc:
+                log(f"{device.serial} stream failed {exc}")
+        self.after(0, lambda n=sent: self._show_overlay(f"Sent {n}"))
+        log(f"sent {name} to {sent}")
+
+    def _whatnot_tick(self):
+        from core.whatnot_live import fetch_live
+        try:
+            fresh = fetch_live([n for n in self.guide_slots if n])
+            status = dict(self._whatnot_status)
+            status.update(fresh)
+            self._whatnot_status = status
+        except Exception as exc:
+            log(f"whatnot check failed {exc}")
+        self._whatnot_busy = False
+
+    def _streamer_info(self, name: str) -> dict:
+        info = dict((self._whatnot_status or {}).get(name) or {})
+        if info.get("online") and info.get("url"):
+            return info
+        extra = (self.chromium.snapshot() if self.chromium else {}).get(name) or {}
+        return extra or info
+
+    def _paint_streamers(self):
+        now = time.monotonic()
+        if not self._whatnot_busy and now - self._whatnot_at > 8:
+            self._whatnot_busy = True
+            self._whatnot_at = now
+            threading.Thread(target=self._whatnot_tick, daemon=True).start()
+        for i, btn in enumerate(getattr(self, "stream_btns", [])):
+            name = self.guide_slots[i] if i < len(self.guide_slots) else ""
+            info = self._streamer_info(name) if name else {}
+            online = bool(name and info.get("online") and info.get("url"))
+            btn.configure(
+                text=(name or str(i + 1)).upper(),
+                fg_color=GREEN if online else RED,
+                hover_color="#28b34a" if online else "#d32b22",
+            )
+        self.after(1000, self._paint_streamers)
 
     def _close(self):
         self._rules_running = False
         self._pause_hier = True
+        try:
+            if self.chromium:
+                self.chromium.close()
+        except Exception:
+            pass
         try:
             self.device.stop_live()
         except Exception:
@@ -455,7 +647,7 @@ class CompactController(ctk.CTk):
 
     def _raise_controls(self):
         """Keep CTk's rounded canvases behind the mirror and the buttons."""
-        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header, self._bar_inner):
+        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header, self._bar_inner, self.url_bar, self.guide_host, self.slot_bar):
             bg = getattr(frame, "_canvas", None)
             if bg is None or bg is self.phone_view.canvas:
                 continue
@@ -463,7 +655,7 @@ class CompactController(ctk.CTk):
                 bg.lower()
             except Exception:
                 pass
-        for widget in (self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu):
+        for widget in self._guard_widgets():
             try:
                 widget.lift()
             except Exception:
@@ -472,12 +664,18 @@ class CompactController(ctk.CTk):
             self.phone_view.canvas.lift()
         except Exception:
             pass
-        for widget in (self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu):
+        for widget in self._guard_widgets():
             try:
                 widget.lift()
             except Exception:
                 pass
         self._bind_mirror_clicks()
+
+    def _guard_widgets(self):
+        return (
+            self.add_btn, self.run_btn, self.reset_btn, self.close_btn,
+            self.device_menu, self.url_entry, *self.stream_btns,
+        )
 
     def _keep_clicks_on_mirror(self):
         self._raise_controls()
@@ -500,7 +698,7 @@ class CompactController(ctk.CTk):
         """The click path that selected elements: screen position to the picture."""
         def press(event):
             widget = getattr(event, "widget", None)
-            buttons = (self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu)
+            buttons = self._guard_widgets()
             if widget is not None and any(self._owned_by(widget, btn) for btn in buttons):
                 return
             canvas = self.phone_view.canvas
@@ -536,6 +734,10 @@ class CompactController(ctk.CTk):
             if self._inside(self.close_btn, x_root, y_root) and not self._owned_by(event.widget, self.close_btn):
                 self.destroy()
                 return "break"
+            for i, btn in enumerate(self.stream_btns):
+                if self._inside(btn, x_root, y_root) and not self._owned_by(event.widget, btn):
+                    self._streamer_click(i)
+                    return "break"
 
         self._press_select = press
         if not getattr(self, "_press_bound", False):
@@ -544,7 +746,7 @@ class CompactController(ctk.CTk):
             self.bind_class("Canvas", "<Button-1>", press, add="+")
             self._press_bound = True
 
-        skip = {self.add_btn, self.run_btn, self.reset_btn, self.close_btn, self.device_menu}
+        skip = set(self._guard_widgets())
 
         def walk(widget):
             for child in widget.winfo_children():

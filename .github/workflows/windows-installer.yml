@@ -46,6 +46,7 @@ jobs:
             --collect-all uiautomator2 `
             --collect-all adbutils `
             --collect-all PIL `
+            --collect-all playwright `
             --hidden-import PIL._tkinter_finder `
             --hidden-import lxml.etree `
             main.py
@@ -65,6 +66,8 @@ jobs:
             Click an element to select it. The mirror picture updates on its own.
             Element boxes update only when the screen actually changes.
             Saved tags and rules stay in a data folder next to the exe.
+            The guide uses Chromium. The first launch downloads it next to the exe.
+            Sign in once. The login stays in that profile.
           files: dist/PhoneElementInspector.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
