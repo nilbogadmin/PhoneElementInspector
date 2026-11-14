@@ -18,6 +18,7 @@ from core.tagger import Tagger
 from core.rules import RulesEngine
 from core.element import UIElement, flatten_elements
 from core.paths import app_dir
+from core.log import log
 from gui.phone_view import PhoneView
 
 BG = "#121214"
@@ -86,6 +87,7 @@ class CompactController(ctk.CTk):
         self.after(200, self._initial_load)
         self._start_detect()
         self._bind_drag()
+        log("ready")
 
     def _build_ui(self):
         btn_font = ctk.CTkFont(family="Poppins Condensed", size=22, weight="bold")
@@ -691,6 +693,13 @@ class CompactController(ctk.CTk):
             "conditions": [{"type": "element_visible", "tag": name}],
             "actions": [{"type": "click", "tag": name}],
         })
+        raw = getattr(self.current_element, "_raw_bounds", None) or self.current_element.bounds
+        log(
+            f"ADD {name} {self.current_element.class_name} "
+            f"id={self.current_element.resource_id or '-'} "
+            f"text={self.current_element.text or '-'} "
+            f"bounds={list(raw)}"
+        )
         self._show_overlay(f"Added {name}")
 
     def _reset_rules(self):
@@ -706,6 +715,7 @@ class CompactController(ctk.CTk):
         if self.root_element is not None:
             self._apply_hierarchy(self.root_element)
         self._show_overlay("Cleared")
+        log("RESET")
 
     def _toggle_rules(self):
         if self._rules_running:
@@ -717,6 +727,7 @@ class CompactController(ctk.CTk):
         self._rules_running = True
         self.run_btn.configure(text="STOP", fg_color=RED)
         self._show_overlay("Running")
+        log("START")
         self._rules_tick()
 
     def _stop_rules(self):
@@ -726,6 +737,7 @@ class CompactController(ctk.CTk):
             self.after_cancel(self._rules_job)
             self._rules_job = None
         self._show_overlay("Stopped")
+        log("STOP")
 
     def _rules_tick(self):
         if not self._rules_running:
@@ -765,6 +777,7 @@ class CompactController(ctk.CTk):
             self._show_overlay("No devices")
         elif hits:
             self._show_overlay(f"{hits} clicks")
+        log(f"scan phones={count} clicks={hits}")
         self._rules_job = self.after(1200, self._rules_tick)
 
     def _fire_device(self, serial: str) -> int:
@@ -778,9 +791,10 @@ class CompactController(ctk.CTk):
                 self._u2_cache[serial] = d
         try:
             xml = self.device._dump_xml(d)
-        except Exception:
+        except Exception as exc:
             with self._u2_lock:
                 self._u2_cache.pop(serial, None)
+            log(f"{serial} dump failed {exc}")
             return 0
         root = parse_hierarchy_xml(xml)
         from core.match import clicks_for_device
@@ -791,6 +805,8 @@ class CompactController(ctk.CTk):
             hold=self._held.get(serial),
         )
         self._held[serial] = set(seen)
+        if taps:
+            log(f"{serial} tap {taps}")
         for x, y in taps:
             try:
                 d.click(int(x), int(y))
