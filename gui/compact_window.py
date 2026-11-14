@@ -37,9 +37,8 @@ BAR_H = 84
 DROP_H = 48
 HEAD_H = 42
 PHONE_ASPECT = (19.5 / 9) * 0.5   # half height for top-half only
-GUIDE_H = 380
 URL_H = 36
-SLOT_H = 52
+SLOT_H = 184
 
 
 class CompactController(ctk.CTk):
@@ -125,23 +124,22 @@ class CompactController(ctk.CTk):
         self.url_entry.pack(fill="x", padx=8, pady=4)
         self.url_entry.bind("<Return>", self._open_guide_url)
 
-        self.guide_host = ctk.CTkFrame(self, height=GUIDE_H, fg_color="#000000", corner_radius=8)
-        self.guide_host.pack(fill="x", side="top", pady=(0, 4))
-        self.guide_host.pack_propagate(False)
-
         self.slot_bar = ctk.CTkFrame(self, height=SLOT_H, fg_color=SURFACE, corner_radius=8)
         self.slot_bar.pack(fill="x", side="top", pady=(0, 4))
         self.slot_bar.pack_propagate(False)
-        slot_font = ctk.CTkFont(family="Poppins Condensed", size=14, weight="bold")
+        slot_font = ctk.CTkFont(family="Poppins Condensed", size=28, weight="bold")
         self.stream_btns = []
+        for col in range(3):
+            self.slot_bar.grid_columnconfigure(col, weight=1)
+        for row in range(2):
+            self.slot_bar.grid_rowconfigure(row, weight=1)
         for i in range(6):
-            self.slot_bar.grid_columnconfigure(i, weight=1)
             btn = ctk.CTkButton(
-                self.slot_bar, text=str(i + 1), height=40, corner_radius=8,
+                self.slot_bar, text=str(i + 1), height=80, corner_radius=8,
                 fg_color=RED, hover_color="#d32b22",
                 font=slot_font, command=lambda i=i: self._streamer_click(i),
             )
-            btn.grid(row=0, column=i, sticky="ew", padx=3, pady=6)
+            btn.grid(row=i // 3, column=i % 3, sticky="nsew", padx=4, pady=4)
             btn.bind("<Button-3>", lambda _e, i=i: self._rename_streamer(i))
             self.stream_btns.append(btn)
 
@@ -206,7 +204,7 @@ class CompactController(ctk.CTk):
 
     def _window_height(self) -> int:
         mirror_h = int(BAR_W * PHONE_ASPECT)
-        return mirror_h + BAR_H + DROP_H + HEAD_H + GUIDE_H + URL_H + SLOT_H + 40
+        return mirror_h + BAR_H + DROP_H + HEAD_H + URL_H + SLOT_H + 36
 
     def _format_geo(self, x: int, y: int) -> str:
         """Fixed size. Negative coordinates must not become '+-10' or Tk throws."""
@@ -307,14 +305,7 @@ class CompactController(ctk.CTk):
         log("guide on")
 
     def _sync_guide(self):
-        if not self.chromium:
-            return
-        try:
-            self.update_idletasks()
-            host = self.guide_host
-            self.chromium.move(host.winfo_rootx(), host.winfo_rooty(), host.winfo_width(), host.winfo_height())
-        except Exception:
-            pass
+        return
 
     def _open_guide_url(self, _event=None):
         url = self.url_entry.get().strip()
@@ -402,7 +393,7 @@ class CompactController(ctk.CTk):
 
     def _paint_streamers(self):
         now = time.monotonic()
-        if not self._whatnot_busy and now - self._whatnot_at > 8:
+        if not self._whatnot_busy and (self._whatnot_at == 0 or now - self._whatnot_at > 300):
             self._whatnot_busy = True
             self._whatnot_at = now
             threading.Thread(target=self._whatnot_tick, daemon=True).start()
@@ -681,7 +672,7 @@ class CompactController(ctk.CTk):
 
     def _raise_controls(self):
         """Keep CTk's rounded canvases behind the mirror and the buttons."""
-        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header, self._bar_inner, self.url_bar, self.guide_host, self.slot_bar):
+        for frame in (self, self.mirror_frame, self.phone_view, self.bar, self.header, self._bar_inner, self.url_bar, self.slot_bar):
             bg = getattr(frame, "_canvas", None)
             if bg is None or bg is self.phone_view.canvas:
                 continue
