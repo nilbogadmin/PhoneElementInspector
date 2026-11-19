@@ -374,27 +374,67 @@ class CompactController(ctk.CTk):
         threading.Thread(target=self._send_stream, args=(url, name, year), daemon=True).start()
 
     def _send_stream(self, url: str, name: str, year: str):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from core.stream_link import safe_url
         url = safe_url(url)
         if not url:
             self.after(0, lambda: self._show_overlay("Bad link"))
             return
         try:
-            import adbutils
-            devices = adbutils.adb.device_list()
+            serials = [s for s in self._adb_serials() if self._phone_year(s) == year]
+        except Exception as exc:
+            log(f"stream list failed {exc}")
+            serials = []
+        pending = list(serials)
+        done = []
+        for attempt in range(3):
+            if not pending:
+                break
+            if attempt:
+                self.after(0, lambda n=len(pending): self._show_overlay(f"Retry {n}"))
+                time.sleep(2)
+            still = []
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futs = {pool.submit(self._deliver_stream, serial, url): serial for serial in pending}
+                for fut in as_completed(futs):
+                    serial = futs[fut]
+                    try:
+                        opened = fut.result()
+                    except Exception as exc:
+                        log(f"{serial} stream failed {exc}")
+                        opened = False
+                    if opened:
+                        done.append(serial)
+                    else:
+                        still.append(serial)
+            pending = still
+            self.after(0, lambda n=len(done), t=len(serials): self._show_overlay(f"Sent {n}/{t}"))
+        if pending:
+            log(f"stream missed {name}: {', '.join(pending)}")
+        log(f"sent {name} to {len(done)}/{len(serials)}")
+
+    def _deliver_stream(self, serial: str, url: str) -> bool:
+        try:
+            self._open_on_phone(serial, url)
+        except Exception as exc:
+            log(f"{serial} stream failed {exc}")
+            return False
+        time.sleep(1.5)
+        return self._stream_is_open(serial, url)
+
+    def _stream_is_open(self, serial: str, url: str) -> bool:
+        from core.stream_link import stream_reached
+        try:
+            data = self._adb_call(serial, ["shell", "dumpsys", "activity", "top"], timeout=6)
         except Exception:
-            devices = []
-        sent = 0
-        for device in devices:
-            if self._phone_year(device.serial) != year:
-                continue
-            try:
-                self._open_on_phone(device.serial, url)
-                sent += 1
-            except Exception as exc:
-                log(f"{device.serial} stream failed {exc}")
-        self.after(0, lambda n=sent: self._show_overlay(f"Sent {n}"))
-        log(f"sent {name} to {sent}")
+            return False
+        return stream_reached(data.decode("utf-8", "replace"), url)
+
+    def _adb_try(self, serial: str, args, timeout: float = 4):
+        try:
+            self._adb_call(serial, args, timeout=timeout)
+        except Exception:
+            return
 
     def _open_on_phone(self, serial: str, url: str):
         """Wake a dark or swipe-locked phone, then open the stream."""
@@ -402,15 +442,15 @@ class CompactController(ctk.CTk):
 
         self._phone_url = getattr(self, "_phone_url", {})
         self._phone_url[serial] = url
-        self._adb_call(serial, ["shell", "input", "keyevent", "KEYCODE_WAKEUP"], timeout=4)
-        self._adb_call(serial, ["shell", "settings", "put", "global", "stay_on_while_plugged_in", "7"], timeout=4)
+        self._adb_try(serial, ["shell", "input", "keyevent", "KEYCODE_WAKEUP"], timeout=4)
+        self._adb_try(serial, ["shell", "settings", "put", "global", "stay_on_while_plugged_in", "7"], timeout=4)
         try:
             dump = self._adb_call(serial, ["shell", "dumpsys", "window"], timeout=5)
             locked = screen_locked(dump.decode("utf-8", "replace"))
         except Exception:
             locked = True
         if locked:
-            self._adb_call(serial, ["shell", "wm", "dismiss-keyguard"], timeout=4)
+            self._adb_try(serial, ["shell", "wm", "dismiss-keyguard"], timeout=4)
             size = ()
             try:
                 size = self.device.wm_for(serial)
@@ -420,7 +460,7 @@ class CompactController(ctk.CTk):
             x = max(1, int(width) // 2)
             y1 = int(height * 0.86)
             y2 = int(height * 0.22)
-            self._adb_call(
+            self._adb_try(
                 serial,
                 ["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), "180"],
                 timeout=4,

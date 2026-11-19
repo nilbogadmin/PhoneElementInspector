@@ -32,6 +32,23 @@ def _token(name: str, text: str) -> bool:
     )
 
 
+def stream_reached(text: str, url: str) -> bool:
+    """True when Whatnot is open on this live link.
+
+    A different live id still on screen is not a success.
+    """
+    live = (url or "").rstrip("/").rsplit("/", 1)[-1]
+    blob = text or ""
+    if "com.whatnot_mobile" not in blob or not live:
+        return False
+    if live in blob:
+        return True
+    if "/live/" in blob:
+        return False
+    return "ACTIVITY com.whatnot_mobile" in blob or "mResumedActivity" in blob
+
+
+
 def safe_url(url: Optional[str]) -> Optional[str]:
     if not url or not isinstance(url, str):
         return None
