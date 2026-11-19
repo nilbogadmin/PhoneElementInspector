@@ -65,13 +65,14 @@ class CompactController(ctk.CTk):
         self._forgotten = set()  # (resource_id, text, bounds) tuples to keep ignored
         self.root_element: Optional[UIElement] = None
         self._rules_job = None
-        self._rules_running = False
+        self._year_on = {"2024": False, "2025": False}
+        self._active_year = "2024"
         self._detect_job = None
         self._hier_job = None
         self._frame_pending = False
         self._drag_x = 0
         self._drag_y = 0
-        self._serial_by_label: dict[str, str] = {}
+        self._serial_by_year: dict[str, str] = {}
         self._u2_cache: dict = {}
         self._u2_lock = threading.Lock()
         self._rule_busy = False
@@ -148,19 +149,20 @@ class CompactController(ctk.CTk):
 
         self.mirror_frame = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=16)
 
-        self.device_menu = ctk.CTkOptionMenu(
-            self.mirror_frame,
-            values=["WAITING"],
-            command=self._on_device_pick,
-            height=40,
-            fg_color=SURFACE2,
-            button_color=SURFACE2,
-            button_hover_color="#3a3a3c",
-            dropdown_fg_color=SURFACE,
-            font=menu_font,
-        )
-        self.device_menu.pack(fill="x", padx=8, pady=(8, 0))
-        self.device_menu.set("WAITING")
+        self.year_bar = ctk.CTkFrame(self.mirror_frame, fg_color="transparent")
+        self.year_bar.pack(fill="x", padx=8, pady=(8, 0))
+        self.year_bar.grid_columnconfigure(0, weight=1, uniform="year")
+        self.year_bar.grid_columnconfigure(1, weight=1, uniform="year")
+        self.year_btns = {}
+        for col, year in enumerate(("2024", "2025")):
+            btn = ctk.CTkButton(
+                self.year_bar, text=year, height=40, corner_radius=8,
+                fg_color=SURFACE2, hover_color="#3a3a3c",
+                font=menu_font, command=lambda y=year: self._pick_year(y),
+            )
+            btn.grid(row=0, column=col, sticky="ew", padx=(0, 4) if col == 0 else (4, 0))
+            self.year_btns[year] = btn
+        self._paint_years()
 
         self.phone_view = PhoneView(
             self.mirror_frame,
@@ -367,10 +369,11 @@ class CompactController(ctk.CTk):
             self._show_overlay("Offline")
             return
         url = info["url"]
-        log(f"send {name} {url}")
-        threading.Thread(target=self._send_stream, args=(url, name), daemon=True).start()
+        log(f"send {name} {url} {self._active_year}")
+        year = self._active_year
+        threading.Thread(target=self._send_stream, args=(url, name, year), daemon=True).start()
 
-    def _send_stream(self, url: str, name: str):
+    def _send_stream(self, url: str, name: str, year: str):
         from core.stream_link import safe_url
         url = safe_url(url)
         if not url:
@@ -383,6 +386,8 @@ class CompactController(ctk.CTk):
             devices = []
         sent = 0
         for device in devices:
+            if self._phone_year(device.serial) != year:
+                continue
             try:
                 self._open_on_phone(device.serial, url)
                 sent += 1
@@ -489,7 +494,7 @@ class CompactController(ctk.CTk):
         self.after(1000, self._paint_streamers)
 
     def _close(self):
-        self._rules_running = False
+        self._year_on = {"2024": False, "2025": False}
         self._pause_hier = True
         try:
             if self.chromium:
@@ -539,34 +544,51 @@ class CompactController(ctk.CTk):
             pass
 
     def _apply_devices(self, pairs):
-        labels = []
-        mapping: dict[str, str] = {}
-        used = {}
-        for serial, model in pairs:
-            label = model
-            used[label] = used.get(label, 0) + 1
-            if used[label] > 1 or label in mapping:
-                label = f"{model} {serial[-4:]}"
-            mapping[label] = serial
-            labels.append(label)
-        self._serial_by_label = mapping
-        if not labels:
-            if self.device_menu.get() != "WAITING":
-                self.device_menu.configure(values=["WAITING"])
-                self.device_menu.set("WAITING")
-            return
-        current = self.device_menu.get()
-        self.device_menu.configure(values=labels)
-        if current in labels:
-            self.device_menu.set(current)
-            return
-        keep = next((lb for lb, s in mapping.items() if s == self.device.serial), labels[0])
-        self.device_menu.set(keep)
-        if self.device.serial != mapping.get(keep):
-            self._on_device_pick(keep)
+        mapping = {}
+        for serial, year in pairs:
+            if year in ("2024", "2025") and year not in mapping:
+                mapping[year] = serial
+        self._serial_by_year = mapping
+        self._paint_years()
+        serial = mapping.get(self._active_year)
+        if serial and serial != self.device.serial:
+            self._on_device_pick(self._active_year)
 
-    def _on_device_pick(self, label: str):
-        serial = self._serial_by_label.get(label)
+    def _phone_year(self, serial: str) -> str:
+        from core.match import model_year
+        try:
+            info = self.device.identity(serial)
+        except Exception:
+            return ""
+        return model_year(info.get("label") or "", *(info.get("family") or []))
+
+    def _pick_year(self, year: str):
+        self._active_year = year
+        self._paint_years()
+        self._paint_run_btn()
+        if not self._serial_by_year.get(year):
+            self._show_overlay(f"No {year}")
+            return
+        self._on_device_pick(year)
+
+    def _paint_years(self):
+        for year, btn in getattr(self, "year_btns", {}).items():
+            on = self._year_on.get(year, False)
+            selected = year == self._active_year
+            btn.configure(
+                text=f"{year} ON" if on else year,
+                fg_color=(RED if selected else "#1e4d2b") if on else (BLUE if selected else SURFACE2),
+                hover_color="#d32b22" if on else ("#0066cc" if selected else "#3a3a3c"),
+            )
+
+    def _paint_run_btn(self):
+        if self._year_on.get(self._active_year):
+            self.run_btn.configure(text="STOP", fg_color=RED, hover_color="#d32b22")
+        else:
+            self.run_btn.configure(text="START", fg_color=BLUE, hover_color="#0066cc")
+
+    def _on_device_pick(self, year: str):
+        serial = self._serial_by_year.get(year)
         if not serial or serial == self.device.serial:
             return
         self._pause_hier = True
@@ -578,7 +600,7 @@ class CompactController(ctk.CTk):
         self.phone_view.set_elements([])
         self.phone_view.clear_selection()
         self._release_input_grab()
-        self._show_overlay(label)
+        self._show_overlay(year)
         threading.Thread(target=self._switch_device, args=(serial,), daemon=True).start()
 
     def _switch_device(self, serial: str):
@@ -601,16 +623,6 @@ class CompactController(ctk.CTk):
             self.grab_release()
         except Exception:
             pass
-        menu = getattr(self.device_menu, "_dropdown_menu", None)
-        if menu is not None:
-            try:
-                menu.grab_release()
-            except Exception:
-                pass
-            try:
-                menu.withdraw()
-            except Exception:
-                pass
         try:
             self.focus_force()
         except Exception:
@@ -700,7 +712,7 @@ class CompactController(ctk.CTk):
             and not self.device.demo_mode
             and not self._hier_busy
             and not self._pause_hier
-            and not self._rules_running
+            and not self._year_on.get(self._active_year)
             and self.device.device is not None
         ):
             self._hier_busy = True
@@ -779,7 +791,7 @@ class CompactController(ctk.CTk):
     def _guard_widgets(self):
         return (
             self.add_btn, self.run_btn, self.reset_btn, self.apps_btn, self.close_btn,
-            self.device_menu, self.url_entry, *self.stream_btns,
+            *self.year_btns.values(), self.url_entry, *self.stream_btns,
         )
 
     def _keep_clicks_on_mirror(self):
@@ -846,6 +858,10 @@ class CompactController(ctk.CTk):
             if self._inside(self.apps_btn, x_root, y_root) and not self._owned_by(event.widget, self.apps_btn):
                 self._close_apps()
                 return "break"
+            for year, btn in self.year_btns.items():
+                if self._inside(btn, x_root, y_root) and not self._owned_by(event.widget, btn):
+                    self._pick_year(year)
+                    return "break"
             if self._inside(self.close_btn, x_root, y_root) and not self._owned_by(event.widget, self.close_btn):
                 self.destroy()
                 return "break"
@@ -1060,30 +1076,31 @@ class CompactController(ctk.CTk):
                 log(f"{serial} close apps failed {exc}")
         self.after(0, lambda n=closed: self._show_overlay(f"Closed {n}"))
 
+    def _any_rules(self) -> bool:
+        return any(self._year_on.values())
+
     def _toggle_rules(self):
-        if self._rules_running:
-            self._stop_rules()
-        else:
-            self._start_rules()
-
-    def _start_rules(self):
-        self._rules_running = True
-        self.run_btn.configure(text="STOP", fg_color=RED)
-        self._show_overlay("Running")
-        log("START")
-        self._rules_tick()
-
-    def _stop_rules(self):
-        self._rules_running = False
-        self.run_btn.configure(text="START", fg_color=BLUE)
-        if self._rules_job:
-            self.after_cancel(self._rules_job)
-            self._rules_job = None
-        self._show_overlay("Stopped")
-        log("STOP")
+        year = self._active_year
+        if self._year_on.get(year):
+            self._year_on[year] = False
+            self._paint_run_btn()
+            self._paint_years()
+            self._show_overlay(f"{year} stopped")
+            log(f"STOP {year}")
+            if not self._any_rules() and self._rules_job:
+                self.after_cancel(self._rules_job)
+                self._rules_job = None
+            return
+        self._year_on[year] = True
+        self._paint_run_btn()
+        self._paint_years()
+        self._show_overlay(f"{year} running")
+        log(f"START {year}")
+        if self._rules_job is None:
+            self._rules_tick()
 
     def _rules_tick(self):
-        if not self._rules_running:
+        if not self._any_rules():
             return
         if self._rule_busy:
             self._rules_job = self.after(200, self._rules_tick)
@@ -1096,7 +1113,8 @@ class CompactController(ctk.CTk):
         hits = 0
         count = 0
         try:
-            serials = self._adb_serials()
+            running = {year for year, on in self._year_on.items() if on}
+            serials = [s for s in self._adb_serials() if self._phone_year(s) in running]
             count = len(serials)
             with self._busy_lock:
                 free = [s for s in serials if s not in self._busy_serials]
@@ -1166,7 +1184,7 @@ class CompactController(ctk.CTk):
 
     def _rules_round_done(self, hits: int, count: int):
         self._rule_busy = False
-        if not self._rules_running:
+        if not self._any_rules():
             return
         if count == 0:
             self._show_overlay("No devices")
