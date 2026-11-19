@@ -95,7 +95,7 @@ def iter_mirror(serial: str, running):
             if not frames:
                 continue
             now = time.monotonic()
-            if now - shown < 0.05:
+            if now - shown < 0.033:
                 continue
             shown = now
             image = frames[-1].to_image()
