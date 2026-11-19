@@ -84,6 +84,8 @@ class CompactController(ctk.CTk):
         self._mapped_scale = None
         self._dev_sig = None
         self._held = {}
+        self._busy_serials = set()
+        self._busy_lock = threading.Lock()
         self._overlay_job = None
         self.guide_slots = self._load_slots()
         self.chromium = None
@@ -983,25 +985,77 @@ class CompactController(ctk.CTk):
         threading.Thread(target=self._rules_round, daemon=True).start()
 
     def _rules_round(self):
+        from concurrent.futures import wait
         hits = 0
         count = 0
         try:
-            import adbutils
-            serials = [d.serial for d in adbutils.adb.device_list()]
+            serials = self._adb_serials()
             count = len(serials)
-            if serials:
-                futs = [self._pool.submit(self._fire_device, s) for s in serials]
-                for fut in futs:
+            with self._busy_lock:
+                free = [s for s in serials if s not in self._busy_serials]
+                self._busy_serials.update(free)
+            if free:
+                try:
+                    futs = [self._pool.submit(self._fire_device, s) for s in free]
+                except Exception:
+                    with self._busy_lock:
+                        self._busy_serials.difference_update(free)
+                    raise
+                done, _pending = wait(futs, timeout=12)
+                for fut in done:
                     try:
-                        hits += fut.result(timeout=25)
+                        hits += fut.result()
                     except Exception:
                         continue
-        except Exception:
+        except Exception as exc:
+            log(f"scan failed {exc}")
             hits = 0
         try:
             self.after(0, lambda h=hits, n=count: self._rules_round_done(h, n))
         except Exception:
             self._rule_busy = False
+
+    def _adb_bin(self) -> str:
+        import shutil
+        return shutil.which("adb") or "adb"
+
+    def _adb_call(self, serial: str, args, timeout: float = 8):
+        import subprocess
+        import sys
+        cmd = [self._adb_bin(), "-s", serial, *args]
+        flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.DEVNULL, **flags)
+
+    def _adb_serials(self):
+        import subprocess
+        import sys
+        flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        out = subprocess.check_output([self._adb_bin(), "devices"], timeout=5, stderr=subprocess.DEVNULL, **flags)
+        serials = []
+        for line in out.decode("utf-8", "replace").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == "device":
+                serials.append(parts[0])
+        return serials
+
+    def _dump_serial(self, serial: str) -> str:
+        try:
+            self._adb_call(serial, ["shell", "rm", "-f", "/data/local/tmp/pei.xml"], timeout=3)
+            self._adb_call(serial, ["shell", "uiautomator", "dump", "/data/local/tmp/pei.xml"], timeout=8)
+            data = self._adb_call(serial, ["exec-out", "cat", "/data/local/tmp/pei.xml"], timeout=5)
+        except Exception:
+            try:
+                self._adb_call(serial, ["shell", "pkill", "-f", "uiautomator"], timeout=3)
+            except Exception:
+                pass
+            raise
+        text = data.decode("utf-8", "replace")
+        start = text.find("<hierarchy")
+        if start < 0:
+            start = text.find("<?xml")
+        if start < 0:
+            raise RuntimeError("no hierarchy")
+        return text[start:]
 
     def _rules_round_done(self, hits: int, count: int):
         self._rule_busy = False
@@ -1015,41 +1069,35 @@ class CompactController(ctk.CTk):
         self._rules_job = self.after(1200, self._rules_tick)
 
     def _fire_device(self, serial: str) -> int:
-        import uiautomator2 as u2
         from core.hierarchy import parse_hierarchy_xml
-        with self._u2_lock:
-            d = self._u2_cache.get(serial)
-        if d is None:
-            d = u2.connect(serial)
-            with self._u2_lock:
-                self._u2_cache[serial] = d
         try:
-            xml = self.device._dump_xml(d)
-        except Exception as exc:
-            with self._u2_lock:
-                self._u2_cache.pop(serial, None)
-            log(f"{serial} dump failed {exc}")
-            return 0
-        root = parse_hierarchy_xml(xml)
-        from core.match import clicks_for_device
-        family = self.device.identity(serial).get("family") or []
-        wm = self.device.wm_for(serial)
-        taps, seen = clicks_for_device(
-            self.tagger, self.rules.rules, root, family, wm, serial=serial,
-            hold=self._held.get(serial),
-        )
-        self._held[serial] = set(seen)
-        if taps:
-            log(f"{serial} tap {taps}")
-        for x, y in taps:
             try:
-                d.click(int(x), int(y))
-            except Exception:
+                xml = self._dump_serial(serial)
+            except Exception as exc:
+                log(f"{serial} dump failed {exc}")
+                return 0
+            root = parse_hierarchy_xml(xml)
+            from core.match import clicks_for_device
+            family = self.device.identity(serial).get("family") or []
+            wm = self.device.wm_for(serial)
+            taps, seen = clicks_for_device(
+                self.tagger, self.rules.rules, root, family, wm, serial=serial,
+                hold=self._held.get(serial),
+            )
+            self._held[serial] = set(seen)
+            if taps:
+                log(f"{serial} tap {taps}")
+            sent = 0
+            for x, y in taps:
                 try:
-                    d.shell(f"input tap {int(x)} {int(y)}")
-                except Exception:
-                    pass
-        return len(taps)
+                    self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+                    sent += 1
+                except Exception as exc:
+                    log(f"{serial} tap failed {exc}")
+            return sent
+        finally:
+            with self._busy_lock:
+                self._busy_serials.discard(serial)
 
 
 def main():
