@@ -205,6 +205,13 @@ class CompactController(ctk.CTk):
         )
         self.reset_btn.pack(side="left", padx=6)
 
+        self.apps_btn = ctk.CTkButton(
+            self._bar_inner, text="CLOSE APPS", width=btn_w, height=btn_h, corner_radius=10,
+            fg_color="#5c1a1a", hover_color="#7a2424",
+            command=self._close_apps, font=btn_font,
+        )
+        self.apps_btn.pack(side="left", padx=6)
+
     def _window_height(self) -> int:
         mirror_h = int(BAR_W * PHONE_ASPECT)
         return mirror_h + BAR_H + DROP_H + HEAD_H + URL_H + SLOT_H + 36
@@ -771,7 +778,7 @@ class CompactController(ctk.CTk):
 
     def _guard_widgets(self):
         return (
-            self.add_btn, self.run_btn, self.reset_btn, self.close_btn,
+            self.add_btn, self.run_btn, self.reset_btn, self.apps_btn, self.close_btn,
             self.device_menu, self.url_entry, *self.stream_btns,
         )
 
@@ -835,6 +842,9 @@ class CompactController(ctk.CTk):
                 return "break"
             if self._inside(self.reset_btn, x_root, y_root) and not self._owned_by(event.widget, self.reset_btn):
                 self._reset_rules()
+                return "break"
+            if self._inside(self.apps_btn, x_root, y_root) and not self._owned_by(event.widget, self.apps_btn):
+                self._close_apps()
                 return "break"
             if self._inside(self.close_btn, x_root, y_root) and not self._owned_by(event.widget, self.close_btn):
                 self.destroy()
@@ -1023,6 +1033,32 @@ class CompactController(ctk.CTk):
             self._apply_hierarchy(self.root_element)
         self._show_overlay("Cleared")
         log("RESET")
+
+    def _close_apps(self):
+        self._show_overlay("Closing")
+        threading.Thread(target=self._close_apps_worker, daemon=True).start()
+
+    def _close_apps_worker(self):
+        script = (
+            "for p in $(pm list packages -3 | cut -d: -f2); do am force-stop $p; done; "
+            "ids=$(dumpsys activity recents | grep -oE '#[0-9]+ type=|taskId=[0-9]+' | grep -oE '[0-9]+' | sort -u); "
+            "for id in $ids; do cmd activity remove-task $id; am stack remove $id; done; "
+            "am kill-all; input keyevent 3"
+        )
+        try:
+            serials = self._adb_serials()
+        except Exception as exc:
+            log(f"close apps failed {exc}")
+            serials = []
+        closed = 0
+        for serial in serials:
+            try:
+                self._adb_call(serial, ["shell", script], timeout=30)
+                closed += 1
+                log(f"{serial} apps closed")
+            except Exception as exc:
+                log(f"{serial} close apps failed {exc}")
+        self.after(0, lambda n=closed: self._show_overlay(f"Closed {n}"))
 
     def _toggle_rules(self):
         if self._rules_running:
