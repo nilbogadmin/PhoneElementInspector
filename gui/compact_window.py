@@ -368,12 +368,47 @@ class CompactController(ctk.CTk):
         sent = 0
         for device in devices:
             try:
-                device.shell("am start -a android.intent.action.VIEW -d " + url)
+                self._open_on_phone(device.serial, url)
                 sent += 1
             except Exception as exc:
                 log(f"{device.serial} stream failed {exc}")
         self.after(0, lambda n=sent: self._show_overlay(f"Sent {n}"))
         log(f"sent {name} to {sent}")
+
+    def _open_on_phone(self, serial: str, url: str):
+        """Wake a dark or swipe-locked phone, then open the stream."""
+        from core.device import screen_locked
+
+        self._phone_url = getattr(self, "_phone_url", {})
+        self._phone_url[serial] = url
+        self._adb_call(serial, ["shell", "input", "keyevent", "KEYCODE_WAKEUP"], timeout=4)
+        self._adb_call(serial, ["shell", "settings", "put", "global", "stay_on_while_plugged_in", "7"], timeout=4)
+        try:
+            dump = self._adb_call(serial, ["shell", "dumpsys", "window"], timeout=5)
+            locked = screen_locked(dump.decode("utf-8", "replace"))
+        except Exception:
+            locked = True
+        if locked:
+            self._adb_call(serial, ["shell", "wm", "dismiss-keyguard"], timeout=4)
+            size = ()
+            try:
+                size = self.device.wm_for(serial)
+            except Exception:
+                size = ()
+            width, height = size[0] if size else (720, 1600)
+            x = max(1, int(width) // 2)
+            y1 = int(height * 0.86)
+            y2 = int(height * 0.22)
+            self._adb_call(
+                serial,
+                ["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), "180"],
+                timeout=4,
+            )
+        self._adb_call(
+            serial,
+            ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url],
+            timeout=8,
+        )
 
     def _whatnot_tick(self):
         from core.whatnot_live import fetch_live

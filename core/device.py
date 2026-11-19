@@ -367,3 +367,13 @@ class DeviceConnector:
 
     def get_screenshot(self) -> Optional[Image.Image]:
         return self.last_screenshot
+
+
+def screen_locked(text: str) -> bool:
+    """True when the dump shows the keyguard. A PIN lock cannot be skipped."""
+    low = (text or "").lower()
+    if "mshowinglockscreen=true" in low or "isstatusbarkeyguard=true" in low or "mdreaminglockscreen=true" in low:
+        return True
+    if "mshowinglockscreen=false" in low or "isstatusbarkeyguard=false" in low:
+        return False
+    return False
