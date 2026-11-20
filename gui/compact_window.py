@@ -119,13 +119,13 @@ class CompactController(ctk.CTk):
         self.header = ctk.CTkFrame(self, height=HEAD_H, fg_color=SURFACE, corner_radius=12)
         self.header.pack(fill="x", side="top", pady=(0, 4))
         self.header.pack_propagate(False)
-        self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
-        self.drag_zone.pack(side="left", fill="both", expand=True)
         self.dev_label = ctk.CTkLabel(
-            self.header, text="looking", text_color=LABEL,
+            self.header, text="looking", text_color=LABEL, width=140,
             font=ctk.CTkFont(family="Poppins Condensed", size=16, weight="bold"),
         )
         self.dev_label.pack(side="left", padx=8)
+        self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
+        self.drag_zone.pack(side="left", fill="both", expand=True)
         self.close_btn = ctk.CTkButton(
             self.header, text="X", width=54, height=32, corner_radius=8,
             fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
@@ -643,11 +643,11 @@ class CompactController(ctk.CTk):
 
     def _detect_worker(self):
         try:
-            import adbutils
-            phones = adbutils.adb.device_list()
-            text = f"{len(phones)} phones"
+            rows = self.device.adb_rows()
+            online = sum(1 for _s, state in rows if state == "device")
+            off = len(rows) - online
+            text = f"{online} phones" if not off else f"{online} phones, {off} off"
         except Exception as exc:
-            phones = []
             text = "adb failed"
             log(f"adb devices failed {exc}")
         self.after(0, lambda t=text: self.dev_label.configure(text=t))
