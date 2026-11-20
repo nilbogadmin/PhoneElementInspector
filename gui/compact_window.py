@@ -431,10 +431,15 @@ class CompactController(ctk.CTk):
                 ctl.poke()
 
     def _click_look(self, serial: str) -> str:
-        """Tap every visible rule, then look. miss means it is still there."""
+        """Tap every visible rule, then look. miss means the tap did not land."""
         from core.hierarchy import parse_hierarchy_xml
         from core.match import clicks_for_device
-        xml = self._dump_serial(serial)
+        try:
+            xml = self._dump_serial(serial)
+        except Exception as exc:
+            self._why_set(serial, "could not see the screen")
+            log(f"{serial} look failed {exc}")
+            return "miss"
         root = parse_hierarchy_xml(xml)
         family = self.device.identity(serial).get("family") or []
         wm = self.device.wm_for(serial)
@@ -443,10 +448,20 @@ class CompactController(ctk.CTk):
         )
         if not taps:
             return "idle"
-        for x, y in taps:
-            self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
-        time.sleep(0.8)
-        xml2 = self._dump_serial(serial)
+        try:
+            for x, y in taps:
+                self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+        except Exception as exc:
+            self._why_set(serial, "tap was not sent")
+            log(f"{serial} tap failed {exc}")
+            return "miss"
+        time.sleep(0.6)
+        try:
+            xml2 = self._dump_serial(serial)
+        except Exception as exc:
+            self._why_set(serial, "could not check the tap")
+            log(f"{serial} recheck failed {exc}")
+            return "miss"
         root2 = parse_hierarchy_xml(xml2)
         _again, seen2 = clicks_for_device(
             self.tagger, self.rules.rules, root2, family, wm, serial=serial, hold=None,
@@ -672,31 +687,26 @@ class CompactController(ctk.CTk):
         return remembered if remembered in ("2024", "2025") else ""
 
     def _serials_for_years(self, years):
-        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         wanted = set(years)
         serials = self._adb_serials()
         if not serials:
             return []
         picked = []
-        pool = ThreadPoolExecutor(max_workers=8)
+        pool = ThreadPoolExecutor(max_workers=4)
         futs = {pool.submit(self._phone_year, serial): serial for serial in serials}
-        try:
-            for fut in as_completed(futs, timeout=12):
-                serial = futs[fut]
-                try:
-                    got = fut.result()
-                except Exception:
-                    got = ""
-                if got in wanted:
-                    picked.append(serial)
-                else:
-                    label = (self.device._identity.get(serial) or {}).get("label") or serial
-                    log(f"skip {serial} year={got or '-'} {label}")
-        except TimeoutError:
-            for fut, serial in futs.items():
-                if not fut.done():
-                    log(f"skip {serial} year read timed out")
-        pool.shutdown(wait=False, cancel_futures=True)
+        for fut in as_completed(futs):
+            serial = futs[fut]
+            try:
+                got = fut.result()
+            except Exception:
+                got = ""
+            if got in wanted:
+                picked.append(serial)
+            else:
+                label = (self.device._identity.get(serial) or {}).get("label") or serial
+                log(f"skip {serial} year={got or '-'} {label}")
+        pool.shutdown(wait=True)
         return picked
 
     def _pick_year(self, year: str):

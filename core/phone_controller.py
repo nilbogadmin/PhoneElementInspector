@@ -91,7 +91,6 @@ class PhoneController:
                 app._why_set(serial, f"stream not open try {self.fails + 1}/5")
                 log(f"{serial} stream again")
                 self._note_fail(url)
-                return
         if app._year_on.get(year):
             result = app._click_look(serial)
             live = app._year_url.get(year) or ""
@@ -100,9 +99,6 @@ class PhoneController:
                 self._note_fail(live)
             elif result == "hit":
                 app._why_set(serial, "tap landed")
-                self._note_ok()
-            else:
-                app._why_set(serial, "watching")
                 self._note_ok()
         now = time.monotonic()
         if now - self.full_at > 300:

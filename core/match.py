@@ -173,19 +173,25 @@ def same_box(saved_bounds, saved_screen, live_bounds, live_screen, tol: float = 
 
 
 def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
-    """Same class, id, text, description, and box. A neighbor does not qualify."""
+    """Same control. A text label sitting on it does not qualify.
+
+    The id and the box have to match. Text can differ across phones of the
+    same model, so it does not block the tap.
+    """
     if not saved or not in_top_half(el, root):
         return False
     if (el.class_name or "") != (saved.get("class_name") or ""):
         return False
-    if (el.resource_id or "") != (saved.get("resource_id") or ""):
+    saved_id = saved.get("resource_id") or ""
+    if saved_id and (el.resource_id or "") != saved_id:
         return False
-    if (el.text or "") != (saved.get("text") or ""):
-        return False
-    if (el.content_desc or "") != (saved.get("content_desc") or ""):
-        return False
+    if not saved_id:
+        if (el.text or "") != (saved.get("text") or ""):
+            return False
+        if (el.content_desc or "") != (saved.get("content_desc") or ""):
+            return False
     raw = _box(el)
-    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.02)
+    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.04)
 
 
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None, hold=None):

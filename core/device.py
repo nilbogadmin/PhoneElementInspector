@@ -91,7 +91,7 @@ class DeviceConnector:
 
     def list_devices(self) -> list:
         """The training menu: first 2024 and first 2025 only."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from .match import model_year, trainer_picks
         import json
         from .paths import app_dir
@@ -109,20 +109,17 @@ class DeviceConnector:
             serials = []
         years = {}
         if serials:
-            pool = ThreadPoolExecutor(max_workers=6)
+            pool = ThreadPoolExecutor(max_workers=4)
             futs = {pool.submit(self.identity, serial): serial for serial in serials}
-            try:
-                for fut in as_completed(futs, timeout=10):
-                    serial = futs[fut]
-                    try:
-                        ident = fut.result() or {}
-                    except Exception:
-                        ident = {}
-                    year = model_year(ident.get("label") or "", *(ident.get("family") or []))
-                    years[serial] = year or remembered.get(serial, "")
-            except TimeoutError:
-                pass
-            pool.shutdown(wait=False, cancel_futures=True)
+            for fut in as_completed(futs):
+                serial = futs[fut]
+                try:
+                    ident = fut.result() or {}
+                except Exception:
+                    ident = {}
+                year = model_year(ident.get("label") or "", *(ident.get("family") or []))
+                years[serial] = year or remembered.get(serial, "")
+            pool.shutdown(wait=True)
         found = []
         for serial in serials:
             found.append((serial, years.get(serial) or remembered.get(serial, "")))
@@ -146,37 +143,18 @@ class DeviceConnector:
             adb = shutil.which("adb") or "adb"
             flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
             data = subprocess.check_output(
-                [adb, "-s", serial, "shell", "getprop"],
-                timeout=6,
+                [adb, "-s", serial, "shell",
+                 "getprop ro.product.marketname; echo ---; "
+                 "getprop ro.product.vendor.marketname; echo ---; "
+                 "getprop ro.product.model; echo ---; "
+                 "getprop ro.product.vendor.model"],
+                timeout=8,
                 stderr=subprocess.DEVNULL,
                 **flags,
             )
-            wanted = {
-                "ro.product.marketname",
-                "ro.product.vendor.marketname",
-                "ro.product.model",
-                "ro.product.vendor.model",
-                "ro.product.name",
-                "ro.product.device",
-                "ro.boot.hardware.sku",
-            }
-            props = {}
-            for line in data.decode("utf-8", "replace").splitlines():
-                if not line.startswith("[") or "]: [" not in line:
-                    continue
-                key, value = line[1:].split("]: [", 1)
-                if key in wanted:
-                    props[key] = value[:-1] if value.endswith("]") else value
-            parts = [
-                props.get("ro.product.marketname", ""),
-                props.get("ro.product.vendor.marketname", ""),
-                props.get("ro.product.model", ""),
-                props.get("ro.product.vendor.model", ""),
-                props.get("ro.boot.hardware.sku", ""),
-                props.get("ro.product.name", ""),
-                props.get("ro.product.device", ""),
-            ]
-            if not any(parts):
+            parts = [p.strip() for p in data.decode("utf-8", "replace").split("---")]
+            parts = [p for p in parts if p and p != "null"]
+            if not parts:
                 return info
             info = {
                 "family": family_aliases(*parts),
