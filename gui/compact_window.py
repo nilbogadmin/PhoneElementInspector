@@ -638,15 +638,6 @@ class CompactController(ctk.CTk):
 
     def _detect_worker(self):
         try:
-            rows = self._adb_states()
-            online = [serial for serial, state in rows if state == "device"]
-            n = len(online)
-            if n != getattr(self, "_phone_count", -1):
-                self._phone_count = n
-                self.after(0, lambda n=n: self._show_overlay(f"{n} phones"))
-        except Exception as exc:
-            log(f"adb list failed {exc}")
-        try:
             self._sync_controllers()
         except Exception as exc:
             log(f"controller sync failed {exc}")
@@ -1302,14 +1293,15 @@ class CompactController(ctk.CTk):
         import sys
         return {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
-    def _adb_host(self, args, timeout: float = 20):
-        from core.adb import call
-        return call(list(args), timeout=timeout)
-
-    def _adb_call(self, serial: str, args, timeout: float = 12):
+    def _adb_host(self, args, timeout: float = 8):
         import subprocess
+        return subprocess.check_output([self._adb_bin(), *args], timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+
+    def _adb_call(self, serial: str, args, timeout: float = 8):
+        import subprocess
+        cmd = [self._adb_bin(), "-s", serial, *args]
         try:
-            return self._adb_host(["-s", serial, *args], timeout=timeout)
+            return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
         except subprocess.TimeoutExpired:
             self._adb_bad.add(serial)
             self._why_set(serial, "adb timed out")
@@ -1325,8 +1317,13 @@ class CompactController(ctk.CTk):
             raise
 
     def _adb_states(self):
-        from core.adb import devices
-        return devices()
+        out = self._adb_host(["devices"], timeout=8)
+        rows = []
+        for line in out.decode("utf-8", "replace").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                rows.append((parts[0], parts[1]))
+        return rows
 
     def _why_set(self, serial: str, text: str):
         reason = " ".join(str(text or "").split())[:180]
