@@ -100,6 +100,8 @@ class CompactController(ctk.CTk):
         self._year_url = {"2024": "", "2025": ""}
         self._year_token = {"2024": 0, "2025": 0}
         self._stream_ok = {}
+        self._why = {}
+        self._years = self._load_years()
 
         self._build_ui()
         self._place_center()
@@ -638,13 +640,36 @@ class CompactController(ctk.CTk):
         if serial and serial != self.device.serial:
             self._on_device_pick(self._active_year)
 
+    def _load_years(self) -> dict:
+        path = app_dir() / "data" / "years.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return {str(k): v for k, v in data.items() if v in ("2024", "2025")}
+
+    def _save_years(self):
+        path = app_dir() / "data" / "years.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._years), encoding="utf-8")
+        except Exception:
+            pass
+
     def _phone_year(self, serial: str) -> str:
         from core.match import model_year
+        remembered = self._years.get(serial) or ""
         try:
             info = self.device.identity(serial)
         except Exception:
-            return ""
-        return model_year(info.get("label") or "", *(info.get("family") or []))
+            info = {}
+        year = model_year(info.get("label") or "", *(info.get("family") or []))
+        if year in ("2024", "2025"):
+            if remembered != year:
+                self._years[serial] = year
+                self._save_years()
+            return year
+        return remembered if remembered in ("2024", "2025") else ""
 
     def _serials_for_years(self, years):
         from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
@@ -1249,16 +1274,66 @@ class CompactController(ctk.CTk):
 
     def _adb_host(self, args, timeout: float = 8):
         import subprocess
-        return subprocess.check_output([self._adb_bin(), *args], timeout=timeout, stderr=subprocess.DEVNULL, **self._adb_flags())
+        return subprocess.check_output([self._adb_bin(), *args], timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+
+    def _why_set(self, serial: str, text: str):
+        reason = " ".join(str(text or "").split())[:180]
+        self._why[serial] = reason
+        ctl = self._controllers.get(serial)
+        if ctl is not None:
+            ctl.reason = reason
 
     def _adb_call(self, serial: str, args, timeout: float = 8):
         import subprocess
         cmd = [self._adb_bin(), "-s", serial, *args]
         try:
-            return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.DEVNULL, **self._adb_flags())
-        except Exception:
+            return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+        except subprocess.TimeoutExpired:
             self._adb_bad.add(serial)
+            self._why_set(serial, "adb timed out")
             raise
+        except subprocess.CalledProcessError as exc:
+            err = (exc.stderr or b"").decode("utf-8", "replace").strip() or f"adb exit {exc.returncode}"
+            self._adb_bad.add(serial)
+            self._why_set(serial, err)
+            raise
+        except Exception as exc:
+            self._adb_bad.add(serial)
+            self._why_set(serial, str(exc) or "adb failed")
+            raise
+
+    def _write_why(self):
+        from core.paths import app_dir
+        try:
+            rows = self._adb_states()
+        except Exception as exc:
+            rows = []
+            log(f"why list failed {exc}")
+        seen = set()
+        lines = ["serial\tyear\tstate\treason"]
+        for serial, state in rows:
+            seen.add(serial)
+            ctl = self._controllers.get(serial)
+            year = (ctl.year if ctl else "") or "-"
+            reason = self._why.get(serial) or (ctl.reason if ctl else "") or ""
+            if state != "device":
+                reason = (state + " " + reason).strip()
+            lines.append(f"{serial}\t{year}\t{state}\t{reason or 'connected'}")
+        for serial, ctl in self._controllers.items():
+            if serial in seen:
+                continue
+            lines.append(f"{serial}\t{ctl.year or '-'}\tmissing\t{self._why.get(serial) or ctl.reason or 'not in adb'}")
+        path = app_dir() / "data" / "why.txt"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception as exc:
+            log(f"why write failed {exc}")
+            return
+        bad = [line.split("\t")[0][-4:] for line in lines[1:] if line.split("\t")[-1] not in ("connected", "on stream", "tap landed", "watching")]
+        if bad:
+            self.after(0, lambda n=len(bad): self._show_overlay(f"{n} phones need a look"))
+        log(f"why file {path}")
 
     def _adb_states(self):
         out = self._adb_host(["devices"], timeout=5)
@@ -1326,8 +1401,13 @@ class CompactController(ctk.CTk):
                 except Exception as exc:
                     log(f"adb refresh failed {serial} {exc}")
             self._sync_controllers()
+            self._write_why()
         except Exception as exc:
             log(f"adb refresh failed {exc}")
+            try:
+                self._write_why()
+            except Exception:
+                pass
         self._adb_refresh_busy = False
 
     def _dump_serial(self, serial: str) -> str:

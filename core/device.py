@@ -144,6 +144,9 @@ class DeviceConnector:
                 "label": props.get("MARKET") or props.get("MODEL") or props.get("VMODEL") or serial,
                 "ok": True,
             }
+            from .match import model_year
+            if model_year(info["label"], *info["family"]) not in ("2024", "2025"):
+                return info
         except Exception:
             return info
         self._identity[serial] = info

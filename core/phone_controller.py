@@ -28,6 +28,7 @@ class PhoneController:
         self.full_at = 0.0
         self.fails = 0
         self.rounds = 0
+        self.reason = "starting"
         threading.Thread(target=self._run, name=f"phone-{serial[-6:]}", daemon=True).start()
 
     def poke(self):
@@ -54,13 +55,13 @@ class PhoneController:
     def _pass(self):
         app = self.app
         serial = self.serial
-        year = app._phone_year(serial)
+        year = app._phone_year(serial) or self.year
         if year not in ("2024", "2025"):
-            try:
-                app.device._identity.pop(serial, None)
-            except Exception:
-                pass
-            self._reconnect()
+            if not app._adb_alive(serial):
+                app._why_set(serial, "adb down")
+                self._reconnect()
+            else:
+                app._why_set(serial, "reading model")
             return
         self.year = year
         with self.lock:
@@ -74,6 +75,7 @@ class PhoneController:
             if app._stream_is_open(serial, url):
                 self.stream_token = token
                 self._note_ok()
+                app._why_set(serial, "on stream")
                 app._mark_stream(serial, year, True)
                 log(f"{serial} stream ok")
             elif app._deliver_stream(serial, url):
@@ -81,10 +83,12 @@ class PhoneController:
                 app._phone_url = getattr(app, "_phone_url", {})
                 app._phone_url[serial] = url
                 self._note_ok()
+                app._why_set(serial, "on stream")
                 app._mark_stream(serial, year, True)
                 log(f"{serial} stream ok")
             else:
                 app._mark_stream(serial, year, False)
+                app._why_set(serial, f"stream not open try {self.fails + 1}/5")
                 log(f"{serial} stream again")
                 self._note_fail(url)
                 return
@@ -92,8 +96,13 @@ class PhoneController:
             result = app._click_look(serial)
             live = app._year_url.get(year) or ""
             if result == "miss":
+                app._why_set(serial, f"tap still there try {self.fails + 1}/5")
                 self._note_fail(live)
+            elif result == "hit":
+                app._why_set(serial, "tap landed")
+                self._note_ok()
             else:
+                app._why_set(serial, "watching")
                 self._note_ok()
         now = time.monotonic()
         if now - self.full_at > 300:
