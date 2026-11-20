@@ -93,12 +93,15 @@ class CompactController(ctk.CTk):
         self._whatnot_status = {}
         self._whatnot_busy = False
         self._whatnot_at = 0.0
+        self._adb_bad = set()
+        self._adb_refresh_busy = False
 
         self._build_ui()
         self._place_center()
         self.after(200, self._initial_load)
         self._start_detect()
         self.after(15000, self._fullscreen_tick)
+        self.after(20000, self._adb_refresh_tick)
         self._bind_drag()
         log("ready")
 
@@ -1184,24 +1187,63 @@ class CompactController(ctk.CTk):
         import shutil
         return shutil.which("adb") or "adb"
 
+    def _adb_flags(self) -> dict:
+        import sys
+        return {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+
+    def _adb_host(self, args, timeout: float = 8):
+        import subprocess
+        return subprocess.check_output([self._adb_bin(), *args], timeout=timeout, stderr=subprocess.DEVNULL, **self._adb_flags())
+
     def _adb_call(self, serial: str, args, timeout: float = 8):
         import subprocess
-        import sys
         cmd = [self._adb_bin(), "-s", serial, *args]
-        flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
-        return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.DEVNULL, **flags)
+        try:
+            return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.DEVNULL, **self._adb_flags())
+        except Exception:
+            self._adb_bad.add(serial)
+            raise
 
-    def _adb_serials(self):
-        import subprocess
-        import sys
-        flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
-        out = subprocess.check_output([self._adb_bin(), "devices"], timeout=5, stderr=subprocess.DEVNULL, **flags)
-        serials = []
+    def _adb_states(self):
+        out = self._adb_host(["devices"], timeout=5)
+        rows = []
         for line in out.decode("utf-8", "replace").splitlines()[1:]:
             parts = line.split()
-            if len(parts) >= 2 and parts[1] == "device":
-                serials.append(parts[0])
-        return serials
+            if len(parts) >= 2:
+                rows.append((parts[0], parts[1]))
+        return rows
+
+    def _adb_serials(self):
+        return [serial for serial, state in self._adb_states() if state == "device"]
+
+    def _adb_refresh_tick(self):
+        if not self._adb_refresh_busy:
+            self._adb_refresh_busy = True
+            threading.Thread(target=self._adb_refresh, daemon=True).start()
+        self.after(45000, self._adb_refresh_tick)
+
+    def _adb_refresh(self):
+        """Reconnect phones that dropped, without touching ones waiting for approval."""
+        try:
+            rows = self._adb_states()
+            bad = set(self._adb_bad)
+            self._adb_bad = set()
+            mirror = self.device.serial
+            for serial, state in rows:
+                if state == "unauthorized":
+                    continue
+                if state != "offline" and serial not in bad:
+                    continue
+                if serial == mirror and state == "device" and serial not in bad:
+                    continue
+                try:
+                    self._adb_host(["-s", serial, "reconnect"], timeout=8)
+                    log(f"adb refresh {serial}")
+                except Exception as exc:
+                    log(f"adb refresh failed {serial} {exc}")
+        except Exception as exc:
+            log(f"adb refresh failed {exc}")
+        self._adb_refresh_busy = False
 
     def _dump_serial(self, serial: str) -> str:
         try:
