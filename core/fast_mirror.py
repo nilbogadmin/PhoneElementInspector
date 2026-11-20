@@ -77,7 +77,7 @@ def iter_mirror(serial: str, running):
                 adb, "-s", serial, "shell",
                 f"CLASSPATH={_REMOTE} app_process / com.genymobile.scrcpy.Server {_VERSION} "
                 f"scid={_SCID} tunnel_forward=true audio=false control=false cleanup=false "
-                "max_size=1080 max_fps=30 video_bit_rate=4000000 video_codec=h264 "
+                "max_size=480 max_fps=30 video_bit_rate=1000000 video_codec=h264 "
                 "stay_awake=false power_off_on_close=false",
             ],
             stdout=subprocess.DEVNULL,

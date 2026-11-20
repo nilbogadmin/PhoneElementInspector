@@ -91,19 +91,46 @@ class DeviceConnector:
 
     def list_devices(self) -> list:
         """The training menu: first 2024 and first 2025 only."""
-        import adbutils
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
         from .match import model_year, trainer_picks
+        import json
+        from .paths import app_dir
 
+        remembered = {}
+        try:
+            raw = json.loads((app_dir() / "data" / "years.json").read_text(encoding="utf-8"))
+            remembered = {str(k): v for k, v in raw.items() if v in ("2024", "2025")}
+        except Exception:
+            remembered = {}
+        try:
+            import adbutils
+            serials = [d.serial for d in adbutils.adb.device_list()]
+        except Exception:
+            serials = []
+        years = {}
+        if serials:
+            pool = ThreadPoolExecutor(max_workers=6)
+            futs = {pool.submit(self.identity, serial): serial for serial in serials}
+            try:
+                for fut in as_completed(futs, timeout=10):
+                    serial = futs[fut]
+                    try:
+                        ident = fut.result() or {}
+                    except Exception:
+                        ident = {}
+                    year = model_year(ident.get("label") or "", *(ident.get("family") or []))
+                    years[serial] = year or remembered.get(serial, "")
+            except TimeoutError:
+                pass
+            pool.shutdown(wait=False, cancel_futures=True)
         found = []
-        for d in adbutils.adb.device_list():
-            ident = self.identity(d.serial)
-            year = model_year(ident.get("label") or "", *(ident.get("family") or []))
-            found.append((d.serial, year))
+        for serial in serials:
+            found.append((serial, years.get(serial) or remembered.get(serial, "")))
         return trainer_picks(found)
 
     def identity(self, serial: Optional[str] = None) -> dict:
         """Marketing name plus the aliases shared by every phone of that model."""
-        from .match import family_aliases
+        from .match import family_aliases, model_year
 
         serial = serial or self.serial
         if not serial:
@@ -119,33 +146,44 @@ class DeviceConnector:
             adb = shutil.which("adb") or "adb"
             flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
             data = subprocess.check_output(
-                [adb, "-s", serial, "shell",
-                 "echo MODEL=$(getprop ro.product.model); "
-                 "echo MARKET=$(getprop ro.product.marketname); "
-                 "echo DEVICE=$(getprop ro.product.device); "
-                 "echo NAME=$(getprop ro.product.name); "
-                 "echo VMODEL=$(getprop ro.product.vendor.model); "
-                 "echo SKU=$(getprop ro.boot.hardware.sku)"],
-                timeout=5,
+                [adb, "-s", serial, "shell", "getprop"],
+                timeout=6,
                 stderr=subprocess.DEVNULL,
                 **flags,
             )
+            wanted = {
+                "ro.product.marketname",
+                "ro.product.vendor.marketname",
+                "ro.product.model",
+                "ro.product.vendor.model",
+                "ro.product.name",
+                "ro.product.device",
+                "ro.boot.hardware.sku",
+            }
             props = {}
             for line in data.decode("utf-8", "replace").splitlines():
-                if "=" not in line:
+                if not line.startswith("[") or "]: [" not in line:
                     continue
-                key, value = line.split("=", 1)
-                props[key.strip()] = value.strip()
-            parts = [props.get(key, "") for key in ("MARKET", "MODEL", "VMODEL", "NAME", "DEVICE", "SKU")]
+                key, value = line[1:].split("]: [", 1)
+                if key in wanted:
+                    props[key] = value[:-1] if value.endswith("]") else value
+            parts = [
+                props.get("ro.product.marketname", ""),
+                props.get("ro.product.vendor.marketname", ""),
+                props.get("ro.product.model", ""),
+                props.get("ro.product.vendor.model", ""),
+                props.get("ro.boot.hardware.sku", ""),
+                props.get("ro.product.name", ""),
+                props.get("ro.product.device", ""),
+            ]
             if not any(parts):
                 return info
             info = {
                 "family": family_aliases(*parts),
-                "label": props.get("MARKET") or props.get("MODEL") or props.get("VMODEL") or serial,
+                "label": next((p for p in parts if p), serial),
                 "ok": True,
             }
-            from .match import model_year
-            if model_year(info["label"], *info["family"]) not in ("2024", "2025"):
+            if model_year(*parts) not in ("2024", "2025"):
                 return info
         except Exception:
             return info
@@ -257,10 +295,8 @@ class DeviceConnector:
         self.capture_size = (w, h)
         self.device_px = (w, h)
         self.screen_size = (w, h)
-        scale = 1.0 if w <= 880 else 880 / float(w)
+        scale = 1.0
         self.px_scale = scale
-        if scale != 1.0:
-            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.BILINEAR)
         dw, dh = img.size
         self.display_full_size = (dw, dh)
         top = max(1, dh // 2)

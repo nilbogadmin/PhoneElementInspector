@@ -141,7 +141,7 @@ class PhoneView(ctk.CTkFrame):
         if result is None:
             return
         new_w, new_h = result
-        display = self.base_image.resize((max(1, new_w), max(1, new_h)), Image.Resampling.BILINEAR)
+        display = self.base_image.resize((max(1, new_w), max(1, new_h)), Image.Resampling.BOX)
         self.photo = ImageTk.PhotoImage(display)
         if self._img_id is None:
             self._img_id = self.canvas.create_image(

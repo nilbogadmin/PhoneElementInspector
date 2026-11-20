@@ -49,26 +49,25 @@ def family_aliases(*parts: str) -> List[str]:
     return sorted(aliases)
 
 
-def model_year(*parts: str) -> str:
-    """2024 or 2025 when the phone says so. Otherwise blank.
-
-    A marketing year wins. Otherwise the XT number does, and a later year
-    wins if two numbers show up in the same string.
-    """
-    text = " ".join(p for p in parts if p).lower()
-    years = set(re.findall(r"20(24|25)", text))
-    if len(years) == 1:
-        return "20" + next(iter(years))
-    xts = set(re.findall(r"xt\s*(24|25)\d{2}", text))
-    if "25" in xts:
+def _year_in(text: str) -> str:
+    t = (text or "").lower()
+    if "2025" in t:
         return "2025"
-    if "24" in xts:
+    if "2024" in t:
         return "2024"
-    if "25" in years:
-        return "2025"
-    if "24" in years:
-        return "2024"
+    xt = re.search(r"xt\s*(24|25)\d{2}", t)
+    if xt:
+        return "20" + xt.group(1)
     return ""
+
+
+def model_year(*parts: str) -> str:
+    """2024 or 2025. The marketing name wins, then the model number."""
+    for part in parts:
+        year = _year_in(part)
+        if year:
+            return year
+    return _year_in(" ".join(p for p in parts if p))
 
 
 def trainer_picks(rows):
