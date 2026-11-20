@@ -48,6 +48,12 @@ def _boot() -> None:
 
 _boot()
 
+try:
+    from core.adb import adb_bin
+    os.environ["ADBUTILS_ADB_PATH"] = adb_bin()
+except Exception:
+    pass
+
 from gui.compact_window import CompactController
 
 

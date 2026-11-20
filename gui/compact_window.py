@@ -649,9 +649,8 @@ class CompactController(ctk.CTk):
             log(f"adb devices failed {exc}")
             self.after(0, lambda e=str(exc): self.dev_label.configure(text="adb failed"))
         else:
-            online = sum(1 for _serial, state in rows if state == "device")
-            other = len(rows) - online
-            text = f"{online} phones" if not other else f"{online} phones, {other} off"
+            online = [serial for serial, state in rows if state == "device"]
+            text = f"{len(online)} phones" if len(rows) == len(online) else f"{len(online)} phones, {len(rows) - len(online)} off"
             self.after(0, lambda t=text: self.dev_label.configure(text=t))
         try:
             self._sync_controllers()
@@ -1302,8 +1301,8 @@ class CompactController(ctk.CTk):
             self._rule_busy = False
 
     def _adb_bin(self) -> str:
-        import shutil
-        return shutil.which("adb") or "adb"
+        from core.adb import adb_bin
+        return adb_bin()
 
     def _adb_flags(self) -> dict:
         import sys

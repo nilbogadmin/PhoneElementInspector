@@ -67,21 +67,8 @@ class DeviceConnector:
 
     def adb_rows(self) -> list:
         """Raw `adb devices` rows: (serial, state). Includes offline and unauthorized."""
-        import shutil
-        import subprocess
-        import sys
-        adb = shutil.which("adb") or "adb"
-        flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
-        out = subprocess.check_output([adb, "devices"], timeout=8, stderr=subprocess.STDOUT, **flags)
-        rows = []
-        for line in out.decode("utf-8", "replace").splitlines():
-            line = line.strip()
-            if not line or line.lower().startswith("list of") or line.startswith("*"):
-                continue
-            parts = line.split()
-            if len(parts) >= 2:
-                rows.append((parts[0], parts[1]))
-        return rows
+        from .adb import devices
+        return devices()
 
     def _connect_real(self) -> str:
         try:
