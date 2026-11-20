@@ -80,8 +80,7 @@ class DeviceConnector:
                 self.device = None
                 self.serial = None
                 return "No ADB device found"
-            trainers = self.list_devices()
-            first = trainers[0][0] if trainers else rows[0][0]
+            first = rows[0][0]
             self.serial = first
             self.device = u2.connect(first)
             info = self.device.info

@@ -638,6 +638,15 @@ class CompactController(ctk.CTk):
 
     def _detect_worker(self):
         try:
+            rows = self._adb_states()
+            online = [serial for serial, state in rows if state == "device"]
+            n = len(online)
+            if n != getattr(self, "_phone_count", -1):
+                self._phone_count = n
+                self.after(0, lambda n=n: self._show_overlay(f"{n} phones"))
+        except Exception as exc:
+            log(f"adb list failed {exc}")
+        try:
             self._sync_controllers()
         except Exception as exc:
             log(f"controller sync failed {exc}")
