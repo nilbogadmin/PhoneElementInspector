@@ -121,6 +121,11 @@ class CompactController(ctk.CTk):
         self.header.pack_propagate(False)
         self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
         self.drag_zone.pack(side="left", fill="both", expand=True)
+        self.dev_label = ctk.CTkLabel(
+            self.header, text="looking", text_color=LABEL,
+            font=ctk.CTkFont(family="Poppins Condensed", size=16, weight="bold"),
+        )
+        self.dev_label.pack(side="left", padx=8)
         self.close_btn = ctk.CTkButton(
             self.header, text="X", width=54, height=32, corner_radius=8,
             fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
@@ -637,6 +642,17 @@ class CompactController(ctk.CTk):
         self._detect_job = self.after(2000, self._detect_tick)
 
     def _detect_worker(self):
+        try:
+            rows = self.device.adb_rows()
+        except Exception as exc:
+            rows = []
+            log(f"adb devices failed {exc}")
+            self.after(0, lambda e=str(exc): self.dev_label.configure(text="adb failed"))
+        else:
+            online = sum(1 for _serial, state in rows if state == "device")
+            other = len(rows) - online
+            text = f"{online} phones" if not other else f"{online} phones, {other} off"
+            self.after(0, lambda t=text: self.dev_label.configure(text=t))
         try:
             self._sync_controllers()
         except Exception as exc:
@@ -1317,13 +1333,7 @@ class CompactController(ctk.CTk):
             raise
 
     def _adb_states(self):
-        out = self._adb_host(["devices"], timeout=8)
-        rows = []
-        for line in out.decode("utf-8", "replace").splitlines()[1:]:
-            parts = line.split()
-            if len(parts) >= 2:
-                rows.append((parts[0], parts[1]))
-        return rows
+        return self.device.adb_rows()
 
     def _why_set(self, serial: str, text: str):
         reason = " ".join(str(text or "").split())[:180]

@@ -65,26 +65,55 @@ class DeviceConnector:
             return self._refresh_real()
         return self.connect()
 
+    def adb_rows(self) -> list:
+        """Raw `adb devices` rows: (serial, state). Includes offline and unauthorized."""
+        import shutil
+        import subprocess
+        import sys
+        adb = shutil.which("adb") or "adb"
+        flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+        out = subprocess.check_output([adb, "devices"], timeout=8, stderr=subprocess.STDOUT, **flags)
+        rows = []
+        for line in out.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            if not line or line.lower().startswith("list of") or line.startswith("*"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                rows.append((parts[0], parts[1]))
+        return rows
+
     def _connect_real(self) -> str:
         try:
             import uiautomator2 as u2
-            import adbutils
-            devices = adbutils.adb.device_list()
-            if not devices:
+            try:
+                rows = self.adb_rows()
+            except Exception:
+                rows = []
+            online = [serial for serial, state in rows if state == "device"]
+            if not online:
+                try:
+                    import adbutils
+                    online = [d.serial for d in adbutils.adb.device_list()]
+                except Exception:
+                    online = []
+            if not online:
+                other = ", ".join(f"{serial} {state}" for serial, state in rows[:3])
                 self.device = None
                 self.serial = None
-                return "No ADB device found"
-            trainers = self.list_devices()
-            first = trainers[0][0] if trainers else devices[0].serial
-            self.serial = first
-            self.device = u2.connect(first)
-            info = self.device.info
+                return "No ADB device found" + (f" ({other})" if other else "")
+            self.serial = online[0]
+            self.device = u2.connect(self.serial)
+            try:
+                info = self.device.info or {}
+            except Exception:
+                info = {}
             self.screen_size = (
                 info.get("displayWidth", 1080),
                 info.get("displayHeight", 2400),
             )
-            name = info.get("productName") or info.get("model") or "Android"
-            return f"Connected: {name}"
+            name = info.get("productName") or info.get("model") or self.serial
+            return f"Connected: {name} · {len(online)} phones"
         except Exception as e:
             self.device = None
             return f"ADB unavailable ({e})"
@@ -103,10 +132,15 @@ class DeviceConnector:
         except Exception:
             remembered = {}
         try:
-            import adbutils
-            serials = [d.serial for d in adbutils.adb.device_list()]
+            serials = [serial for serial, state in self.adb_rows() if state == "device"]
         except Exception:
             serials = []
+        if not serials:
+            try:
+                import adbutils
+                serials = [d.serial for d in adbutils.adb.device_list()]
+            except Exception:
+                serials = []
         years = {}
         if serials:
             pool = ThreadPoolExecutor(max_workers=4)
