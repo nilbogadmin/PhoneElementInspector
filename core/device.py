@@ -73,34 +73,21 @@ class DeviceConnector:
     def _connect_real(self) -> str:
         try:
             import uiautomator2 as u2
-            try:
-                rows = self.adb_rows()
-            except Exception:
-                rows = []
-            online = [serial for serial, state in rows if state == "device"]
-            if not online:
-                try:
-                    import adbutils
-                    online = [d.serial for d in adbutils.adb.device_list()]
-                except Exception:
-                    online = []
-            if not online:
-                other = ", ".join(f"{serial} {state}" for serial, state in rows[:3])
+            import adbutils
+            devices = adbutils.adb.device_list()
+            if not devices:
                 self.device = None
                 self.serial = None
-                return "No ADB device found" + (f" ({other})" if other else "")
-            self.serial = online[0]
+                return "No ADB device found"
+            self.serial = devices[0].serial
             self.device = u2.connect(self.serial)
-            try:
-                info = self.device.info or {}
-            except Exception:
-                info = {}
+            info = self.device.info or {}
             self.screen_size = (
                 info.get("displayWidth", 1080),
                 info.get("displayHeight", 2400),
             )
             name = info.get("productName") or info.get("model") or self.serial
-            return f"Connected: {name} · {len(online)} phones"
+            return f"Connected: {name} · {len(devices)} phones"
         except Exception as e:
             self.device = None
             return f"ADB unavailable ({e})"
@@ -119,15 +106,10 @@ class DeviceConnector:
         except Exception:
             remembered = {}
         try:
-            serials = [serial for serial, state in self.adb_rows() if state == "device"]
+            import adbutils
+            serials = [d.serial for d in adbutils.adb.device_list()]
         except Exception:
             serials = []
-        if not serials:
-            try:
-                import adbutils
-                serials = [d.serial for d in adbutils.adb.device_list()]
-            except Exception:
-                serials = []
         years = {}
         if serials:
             pool = ThreadPoolExecutor(max_workers=4)

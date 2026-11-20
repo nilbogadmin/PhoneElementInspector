@@ -643,15 +643,14 @@ class CompactController(ctk.CTk):
 
     def _detect_worker(self):
         try:
-            rows = self.device.adb_rows()
+            import adbutils
+            phones = adbutils.adb.device_list()
+            text = f"{len(phones)} phones"
         except Exception as exc:
-            rows = []
+            phones = []
+            text = "adb failed"
             log(f"adb devices failed {exc}")
-            self.after(0, lambda e=str(exc): self.dev_label.configure(text="adb failed"))
-        else:
-            online = [serial for serial, state in rows if state == "device"]
-            text = f"{len(online)} phones" if len(rows) == len(online) else f"{len(online)} phones, {len(rows) - len(online)} off"
-            self.after(0, lambda t=text: self.dev_label.configure(text=t))
+        self.after(0, lambda t=text: self.dev_label.configure(text=t))
         try:
             self._sync_controllers()
         except Exception as exc:
@@ -1332,7 +1331,13 @@ class CompactController(ctk.CTk):
             raise
 
     def _adb_states(self):
-        return self.device.adb_rows()
+        out = self._adb_host(["devices"], timeout=8)
+        rows = []
+        for line in out.decode("utf-8", "replace").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                rows.append((parts[0], parts[1]))
+        return rows
 
     def _why_set(self, serial: str, text: str):
         reason = " ".join(str(text or "").split())[:180]
