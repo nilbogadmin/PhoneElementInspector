@@ -429,6 +429,12 @@ class CompactController(ctk.CTk):
                     log(f"controller {serial}")
             for ctl in self._controllers.values():
                 ctl.poke()
+            n2024 = sum(1 for c in self._controllers.values() if c.year == "2024")
+            n2025 = sum(1 for c in self._controllers.values() if c.year == "2025")
+            stamp = (len(rows), len(self._controllers), n2024, n2025)
+            if stamp != getattr(self, "_farm_stamp", None):
+                self._farm_stamp = stamp
+                log(f"adb {len(rows)} controllers {len(self._controllers)} 2024 {n2024} 2025 {n2025}")
 
     def _click_look(self, serial: str) -> str:
         """Tap every visible rule, then look. miss means the tap did not land."""
@@ -524,8 +530,13 @@ class CompactController(ctk.CTk):
             )
         self._adb_call(
             serial,
-            ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url],
-            timeout=8,
+            ["shell", "am", "start",
+             "-a", "android.intent.action.VIEW",
+             "-c", "android.intent.category.BROWSABLE",
+             "-d", url,
+             "-p", "com.whatnot_mobile",
+             "-f", "0x10008000"],
+            timeout=10,
         )
 
     def _whatnot_tick(self):
@@ -1282,22 +1293,14 @@ class CompactController(ctk.CTk):
         import sys
         return {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
-    def _adb_host(self, args, timeout: float = 8):
-        import subprocess
-        return subprocess.check_output([self._adb_bin(), *args], timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+    def _adb_host(self, args, timeout: float = 20):
+        from core.adb import call
+        return call(list(args), timeout=timeout)
 
-    def _why_set(self, serial: str, text: str):
-        reason = " ".join(str(text or "").split())[:180]
-        self._why[serial] = reason
-        ctl = self._controllers.get(serial)
-        if ctl is not None:
-            ctl.reason = reason
-
-    def _adb_call(self, serial: str, args, timeout: float = 8):
+    def _adb_call(self, serial: str, args, timeout: float = 12):
         import subprocess
-        cmd = [self._adb_bin(), "-s", serial, *args]
         try:
-            return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+            return self._adb_host(["-s", serial, *args], timeout=timeout)
         except subprocess.TimeoutExpired:
             self._adb_bad.add(serial)
             self._why_set(serial, "adb timed out")
@@ -1311,6 +1314,17 @@ class CompactController(ctk.CTk):
             self._adb_bad.add(serial)
             self._why_set(serial, str(exc) or "adb failed")
             raise
+
+    def _adb_states(self):
+        from core.adb import devices
+        return devices()
+
+    def _why_set(self, serial: str, text: str):
+        reason = " ".join(str(text or "").split())[:180]
+        self._why[serial] = reason
+        ctl = self._controllers.get(serial)
+        if ctl is not None:
+            ctl.reason = reason
 
     def _write_why(self):
         from core.paths import app_dir
@@ -1344,15 +1358,6 @@ class CompactController(ctk.CTk):
         if bad:
             self.after(0, lambda n=len(bad): self._show_overlay(f"{n} phones need a look"))
         log(f"why file {path}")
-
-    def _adb_states(self):
-        out = self._adb_host(["devices"], timeout=5)
-        rows = []
-        for line in out.decode("utf-8", "replace").splitlines()[1:]:
-            parts = line.split()
-            if len(parts) >= 2:
-                rows.append((parts[0], parts[1]))
-        return rows
 
     def _adb_serials(self):
         return [serial for serial, state in self._adb_states() if state == "device"]

@@ -103,10 +103,11 @@ class DeviceConnector:
         except Exception:
             remembered = {}
         try:
-            import adbutils
-            serials = [d.serial for d in adbutils.adb.device_list()]
+            from .adb import devices as adb_devices
+            serials = [serial for serial, state in adb_devices() if state == "device"]
+            self._last_serials = list(serials)
         except Exception:
-            serials = []
+            serials = list(getattr(self, "_last_serials", []))
         years = {}
         if serials:
             pool = ThreadPoolExecutor(max_workers=4)
@@ -137,20 +138,15 @@ class DeviceConnector:
             return cached
         info = {"family": [], "label": serial, "ok": False}
         try:
-            import subprocess
-            import sys
-            import shutil
-            adb = shutil.which("adb") or "adb"
-            flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
-            data = subprocess.check_output(
-                [adb, "-s", serial, "shell",
+            from .adb import call as adb_call
+            data = adb_call(
+                ["-s", serial, "shell",
                  "getprop ro.product.marketname; echo ---; "
-                 "getprop ro.product.vendor.marketname; echo ---; "
                  "getprop ro.product.model; echo ---; "
-                 "getprop ro.product.vendor.model"],
-                timeout=8,
-                stderr=subprocess.DEVNULL,
-                **flags,
+                 "getprop ro.product.vendor.model; echo ---; "
+                 "getprop ro.product.name; echo ---; "
+                 "getprop ro.boot.hardware.sku"],
+                timeout=12,
             )
             parts = [p.strip() for p in data.decode("utf-8", "replace").split("---")]
             parts = [p for p in parts if p and p != "null"]

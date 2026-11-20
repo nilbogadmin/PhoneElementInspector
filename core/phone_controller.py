@@ -118,9 +118,8 @@ class PhoneController:
         self.fails = 0
         self.rounds += 1
         if self.rounds <= 3:
-            log(f"{self.serial} whatnot home then stream {self.rounds}/3")
-            self._whatnot_home()
-            self.stop.wait(1.2)
+            log(f"{self.serial} open stream again {self.rounds}/3")
+            self.stop.wait(0.4)
             if url:
                 try:
                     self.app._open_on_phone(self.serial, url)
