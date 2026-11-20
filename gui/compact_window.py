@@ -1379,10 +1379,6 @@ class CompactController(ctk.CTk):
         """Every minute, ping every phone and reconnect any link that is not up."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         try:
-            try:
-                self._adb_host(["start-server"], timeout=8)
-            except Exception:
-                pass
             rows = self._adb_states()
             bad = set(self._adb_bad)
             self._adb_bad = set()

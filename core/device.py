@@ -68,14 +68,20 @@ class DeviceConnector:
     def _connect_real(self) -> str:
         try:
             import uiautomator2 as u2
-            import adbutils
-            devices = adbutils.adb.device_list()
-            if not devices:
+            from .adb import devices as adb_devices
+            rows = [(s, st) for s, st in adb_devices() if st == "device"]
+            if not rows:
+                try:
+                    import adbutils
+                    rows = [(d.serial, "device") for d in adbutils.adb.device_list()]
+                except Exception:
+                    rows = []
+            if not rows:
                 self.device = None
                 self.serial = None
                 return "No ADB device found"
             trainers = self.list_devices()
-            first = trainers[0][0] if trainers else devices[0].serial
+            first = trainers[0][0] if trainers else rows[0][0]
             self.serial = first
             self.device = u2.connect(first)
             info = self.device.info
