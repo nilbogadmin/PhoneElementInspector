@@ -95,6 +95,11 @@ class CompactController(ctk.CTk):
         self._whatnot_at = 0.0
         self._adb_bad = set()
         self._adb_refresh_busy = False
+        self._controllers = {}
+        self._ctrl_lock = threading.Lock()
+        self._year_url = {"2024": "", "2025": ""}
+        self._year_token = {"2024": 0, "2025": 0}
+        self._stream_ok = {}
 
         self._build_ui()
         self._place_center()
@@ -377,44 +382,76 @@ class CompactController(ctk.CTk):
         threading.Thread(target=self._send_stream, args=(url, name, year), daemon=True).start()
 
     def _send_stream(self, url: str, name: str, year: str):
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         from core.stream_link import safe_url
         url = safe_url(url)
         if not url:
             self.after(0, lambda: self._show_overlay("Bad link"))
             return
+        self._year_url[year] = url
+        self._year_token[year] = self._year_token.get(year, 0) + 1
+        self._sync_controllers()
+        self.after(0, lambda: self._show_overlay(f"{year} sending"))
+        log(f"sent {name} to {year} controllers")
+
+    def _mark_stream(self, serial: str, year: str, ok: bool):
+        self._stream_ok[serial] = bool(ok)
+        now = time.monotonic()
+        if now - getattr(self, "_stream_note_at", 0) < 1.0:
+            return
+        self._stream_note_at = now
+        token = self._year_token.get(year, 0)
+
+        def paint():
+            ctrls = [c for c in self._controllers.values() if c.year == year]
+            good = sum(1 for c in ctrls if c.stream_token == token)
+            self._show_overlay(f"{year} {good}/{len(ctrls)}")
+
         try:
-            serials = [s for s in self._adb_serials() if self._phone_year(s) == year]
+            self.after(0, paint)
+        except Exception:
+            pass
+
+    def _sync_controllers(self):
+        from core.phone_controller import PhoneController
+        try:
+            rows = self._adb_states()
         except Exception as exc:
-            log(f"stream list failed {exc}")
-            serials = []
-        pending = list(serials)
-        done = []
-        for attempt in range(3):
-            if not pending:
-                break
-            if attempt:
-                self.after(0, lambda n=len(pending): self._show_overlay(f"Retry {n}"))
-                time.sleep(2)
-            still = []
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futs = {pool.submit(self._deliver_stream, serial, url): serial for serial in pending}
-                for fut in as_completed(futs):
-                    serial = futs[fut]
-                    try:
-                        opened = fut.result()
-                    except Exception as exc:
-                        log(f"{serial} stream failed {exc}")
-                        opened = False
-                    if opened:
-                        done.append(serial)
-                    else:
-                        still.append(serial)
-            pending = still
-            self.after(0, lambda n=len(done), t=len(serials): self._show_overlay(f"Sent {n}/{t}"))
-        if pending:
-            log(f"stream missed {name}: {', '.join(pending)}")
-        log(f"sent {name} to {len(done)}/{len(serials)}")
+            log(f"controller list failed {exc}")
+            return
+        with self._ctrl_lock:
+            for serial, state in rows:
+                if state == "unauthorized":
+                    continue
+                if serial not in self._controllers:
+                    self._controllers[serial] = PhoneController(self, serial)
+                    log(f"controller {serial}")
+            for ctl in self._controllers.values():
+                ctl.poke()
+
+    def _click_look(self, serial: str) -> str:
+        """Tap every visible rule, then look. miss means it is still there."""
+        from core.hierarchy import parse_hierarchy_xml
+        from core.match import clicks_for_device
+        xml = self._dump_serial(serial)
+        root = parse_hierarchy_xml(xml)
+        family = self.device.identity(serial).get("family") or []
+        wm = self.device.wm_for(serial)
+        taps, seen = clicks_for_device(
+            self.tagger, self.rules.rules, root, family, wm, serial=serial, hold=None,
+        )
+        if not taps:
+            return "idle"
+        for x, y in taps:
+            self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+        time.sleep(0.8)
+        xml2 = self._dump_serial(serial)
+        root2 = parse_hierarchy_xml(xml2)
+        _again, seen2 = clicks_for_device(
+            self.tagger, self.rules.rules, root2, family, wm, serial=serial, hold=None,
+        )
+        if set(seen) & set(seen2):
+            return "miss"
+        return "hit"
 
     def _deliver_stream(self, serial: str, url: str) -> bool:
         try:
@@ -573,6 +610,10 @@ class CompactController(ctk.CTk):
 
     def _detect_worker(self):
         try:
+            self._sync_controllers()
+        except Exception as exc:
+            log(f"controller sync failed {exc}")
+        try:
             pairs = self.device.list_devices()
         except Exception:
             pairs = []
@@ -604,6 +645,34 @@ class CompactController(ctk.CTk):
         except Exception:
             return ""
         return model_year(info.get("label") or "", *(info.get("family") or []))
+
+    def _serials_for_years(self, years):
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+        wanted = set(years)
+        serials = self._adb_serials()
+        if not serials:
+            return []
+        picked = []
+        pool = ThreadPoolExecutor(max_workers=8)
+        futs = {pool.submit(self._phone_year, serial): serial for serial in serials}
+        try:
+            for fut in as_completed(futs, timeout=12):
+                serial = futs[fut]
+                try:
+                    got = fut.result()
+                except Exception:
+                    got = ""
+                if got in wanted:
+                    picked.append(serial)
+                else:
+                    label = (self.device._identity.get(serial) or {}).get("label") or serial
+                    log(f"skip {serial} year={got or '-'} {label}")
+        except TimeoutError:
+            for fut, serial in futs.items():
+                if not fut.done():
+                    log(f"skip {serial} year read timed out")
+        pool.shutdown(wait=False, cancel_futures=True)
+        return picked
 
     def _pick_year(self, year: str):
         self._active_year = year
@@ -1098,26 +1167,11 @@ class CompactController(ctk.CTk):
         threading.Thread(target=self._close_apps_worker, daemon=True).start()
 
     def _close_apps_worker(self):
-        script = (
-            "for p in $(pm list packages -3 | cut -d: -f2); do am force-stop $p; done; "
-            "ids=$(dumpsys activity recents | grep -oE '#[0-9]+ type=|taskId=[0-9]+' | grep -oE '[0-9]+' | sort -u); "
-            "for id in $ids; do cmd activity remove-task $id; am stack remove $id; done; "
-            "am kill-all; input keyevent 3"
-        )
-        try:
-            serials = self._adb_serials()
-        except Exception as exc:
-            log(f"close apps failed {exc}")
-            serials = []
-        closed = 0
-        for serial in serials:
-            try:
-                self._adb_call(serial, ["shell", script], timeout=30)
-                closed += 1
-                log(f"{serial} apps closed")
-            except Exception as exc:
-                log(f"{serial} close apps failed {exc}")
-        self.after(0, lambda n=closed: self._show_overlay(f"Closed {n}"))
+        self._sync_controllers()
+        ctrls = list(self._controllers.values())
+        for ctl in ctrls:
+            ctl.request_close()
+        self.after(0, lambda n=len(ctrls): self._show_overlay(f"Closing {n}"))
 
     def _any_rules(self) -> bool:
         return any(self._year_on.values())
@@ -1145,11 +1199,13 @@ class CompactController(ctk.CTk):
     def _rules_tick(self):
         if not self._any_rules():
             return
-        if self._rule_busy:
-            self._rules_job = self.after(200, self._rules_tick)
-            return
-        self._rule_busy = True
-        threading.Thread(target=self._rules_round, daemon=True).start()
+        try:
+            self._sync_controllers()
+        except Exception:
+            pass
+        for ctl in list(self._controllers.values()):
+            ctl.poke()
+        self._rules_job = self.after(1200, self._rules_tick)
 
     def _rules_round(self):
         from concurrent.futures import wait
@@ -1157,7 +1213,7 @@ class CompactController(ctk.CTk):
         count = 0
         try:
             running = {year for year, on in self._year_on.items() if on}
-            serials = [s for s in self._adb_serials() if self._phone_year(s) in running]
+            serials = self._serials_for_years(running)
             count = len(serials)
             with self._busy_lock:
                 free = [s for s in serials if s not in self._busy_serials]
@@ -1220,27 +1276,56 @@ class CompactController(ctk.CTk):
         if not self._adb_refresh_busy:
             self._adb_refresh_busy = True
             threading.Thread(target=self._adb_refresh, daemon=True).start()
-        self.after(45000, self._adb_refresh_tick)
+        self.after(60000, self._adb_refresh_tick)
+
+    def _adb_alive(self, serial: str) -> bool:
+        try:
+            out = self._adb_host(["-s", serial, "get-state"], timeout=4)
+            return out.decode("utf-8", "replace").strip() == "device"
+        except Exception:
+            return False
 
     def _adb_refresh(self):
-        """Reconnect phones that dropped, without touching ones waiting for approval."""
+        """Every minute, ping every phone and reconnect any link that is not up."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         try:
+            try:
+                self._adb_host(["start-server"], timeout=8)
+            except Exception:
+                pass
             rows = self._adb_states()
             bad = set(self._adb_bad)
             self._adb_bad = set()
-            mirror = self.device.serial
+            targets = []
+            live = []
             for serial, state in rows:
                 if state == "unauthorized":
                     continue
-                if state != "offline" and serial not in bad:
-                    continue
-                if serial == mirror and state == "device" and serial not in bad:
-                    continue
+                if state != "device" or serial in bad:
+                    targets.append(serial)
+                else:
+                    live.append(serial)
+            if live:
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    futs = {pool.submit(self._adb_alive, serial): serial for serial in live}
+                    for fut in as_completed(futs):
+                        try:
+                            ok = fut.result()
+                        except Exception:
+                            ok = False
+                        if not ok:
+                            targets.append(futs[fut])
+            for serial in targets:
                 try:
                     self._adb_host(["-s", serial, "reconnect"], timeout=8)
+                    try:
+                        self.device._identity.pop(serial, None)
+                    except Exception:
+                        pass
                     log(f"adb refresh {serial}")
                 except Exception as exc:
                     log(f"adb refresh failed {serial} {exc}")
+            self._sync_controllers()
         except Exception as exc:
             log(f"adb refresh failed {exc}")
         self._adb_refresh_busy = False

@@ -111,33 +111,41 @@ class DeviceConnector:
         cached = self._identity.get(serial)
         if cached is not None:
             return cached
-        info = {"family": [], "label": serial}
+        info = {"family": [], "label": serial, "ok": False}
         try:
-            import adbutils
-            text = adbutils.adb.device(serial=serial).shell(
-                "echo MODEL=$(getprop ro.product.model); "
-                "echo MARKET=$(getprop ro.product.marketname); "
-                "echo DEVICE=$(getprop ro.product.device); "
-                "echo NAME=$(getprop ro.product.name)"
-            ) or ""
+            import subprocess
+            import sys
+            import shutil
+            adb = shutil.which("adb") or "adb"
+            flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+            data = subprocess.check_output(
+                [adb, "-s", serial, "shell",
+                 "echo MODEL=$(getprop ro.product.model); "
+                 "echo MARKET=$(getprop ro.product.marketname); "
+                 "echo DEVICE=$(getprop ro.product.device); "
+                 "echo NAME=$(getprop ro.product.name); "
+                 "echo VMODEL=$(getprop ro.product.vendor.model); "
+                 "echo SKU=$(getprop ro.boot.hardware.sku)"],
+                timeout=5,
+                stderr=subprocess.DEVNULL,
+                **flags,
+            )
             props = {}
-            for line in str(text).splitlines():
+            for line in data.decode("utf-8", "replace").splitlines():
                 if "=" not in line:
                     continue
                 key, value = line.split("=", 1)
                 props[key.strip()] = value.strip()
-            parts = [
-                props.get("MARKET", ""),
-                props.get("MODEL", ""),
-                props.get("NAME", ""),
-                props.get("DEVICE", ""),
-            ]
+            parts = [props.get(key, "") for key in ("MARKET", "MODEL", "VMODEL", "NAME", "DEVICE", "SKU")]
+            if not any(parts):
+                return info
             info = {
                 "family": family_aliases(*parts),
-                "label": props.get("MARKET") or props.get("MODEL") or serial,
+                "label": props.get("MARKET") or props.get("MODEL") or props.get("VMODEL") or serial,
+                "ok": True,
             }
         except Exception:
-            info = {"family": [], "label": serial}
+            return info
         self._identity[serial] = info
         self._model_cache[serial] = info["label"]
         if serial == self.serial:
