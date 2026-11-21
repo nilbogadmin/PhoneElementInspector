@@ -1,52 +1,43 @@
-"""Ask the adb already running for its phone list. Never start or kill the server."""
+"""Every adb call waits its turn. Nothing is dropped for being past a count."""
 
 from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import threading
+
+_GATE = threading.Semaphore(8)
 
 
 def adb_bin() -> str:
     return shutil.which("adb") or "adb"
 
 
-def _run(args, timeout: float = 15) -> subprocess.CompletedProcess:
-    kwargs = {
-        "args": [adb_bin(), *args],
-        "timeout": timeout,
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-    }
+def _flags() -> dict:
     if sys.platform == "win32":
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        kwargs["startupinfo"] = startup
-        kwargs["creationflags"] = 0x08000000
-    return subprocess.run(**kwargs)
+        return {"creationflags": 0x08000000}
+    return {}
+
+
+def call(args, timeout: float = 20) -> bytes:
+    with _GATE:
+        return subprocess.check_output(
+            [adb_bin(), *args],
+            timeout=timeout,
+            stderr=subprocess.PIPE,
+            **_flags(),
+        )
 
 
 def devices() -> list:
-    done = _run(["devices"])
-    text = (done.stdout or b"").decode("utf-8", "replace")
+    """Every serial adb currently knows about. No cap."""
+    try:
+        call(["start-server"], timeout=15)
+    except Exception:
+        pass
+    out = call(["devices", "-l"], timeout=30)
     rows = []
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[1] in ("device", "offline", "unauthorized", "authorizing"):
-            rows.append((parts[0], parts[1]))
-    if rows:
-        return rows
-    # One more try without the no-window flag. A windowed exe sometimes drops the first capture.
-    done = subprocess.run(
-        [adb_bin(), "devices"],
-        timeout=15,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    text = (done.stdout or b"").decode("utf-8", "replace")
-    rows = []
-    for line in text.splitlines():
+    for line in out.decode("utf-8", "replace").splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 2 and parts[1] in ("device", "offline", "unauthorized", "authorizing"):
             rows.append((parts[0], parts[1]))

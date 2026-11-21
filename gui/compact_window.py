@@ -1293,15 +1293,14 @@ class CompactController(ctk.CTk):
         import sys
         return {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
-    def _adb_host(self, args, timeout: float = 8):
-        import subprocess
-        return subprocess.check_output([self._adb_bin(), *args], timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+    def _adb_host(self, args, timeout: float = 20):
+        from core.adb import call
+        return call(list(args), timeout=timeout)
 
-    def _adb_call(self, serial: str, args, timeout: float = 8):
+    def _adb_call(self, serial: str, args, timeout: float = 12):
         import subprocess
-        cmd = [self._adb_bin(), "-s", serial, *args]
         try:
-            return subprocess.check_output(cmd, timeout=timeout, stderr=subprocess.PIPE, **self._adb_flags())
+            return self._adb_host(["-s", serial, *args], timeout=timeout)
         except subprocess.TimeoutExpired:
             self._adb_bad.add(serial)
             self._why_set(serial, "adb timed out")
@@ -1317,13 +1316,8 @@ class CompactController(ctk.CTk):
             raise
 
     def _adb_states(self):
-        out = self._adb_host(["devices"], timeout=5)
-        rows = []
-        for line in out.decode("utf-8", "replace").splitlines()[1:]:
-            parts = line.split()
-            if len(parts) >= 2:
-                rows.append((parts[0], parts[1]))
-        return rows
+        from core.adb import devices
+        return devices()
 
     def _why_set(self, serial: str, text: str):
         reason = " ".join(str(text or "").split())[:180]
@@ -1385,6 +1379,10 @@ class CompactController(ctk.CTk):
         """Every minute, ping every phone and reconnect any link that is not up."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         try:
+            try:
+                self._adb_host(["start-server"], timeout=8)
+            except Exception:
+                pass
             rows = self._adb_states()
             bad = set(self._adb_bad)
             self._adb_bad = set()
