@@ -41,7 +41,7 @@ class PhoneController:
 
     def _run(self):
         while not self.stop.is_set():
-            self.wake.wait(1.0)
+            self.wake.wait()
             self.wake.clear()
             if self.stop.is_set():
                 return

@@ -57,7 +57,7 @@ class CompactController(ctk.CTk):
         self.device = DeviceConnector()
         self.tagger = Tagger(storage_path=data / "tags.json")
         self.rules = RulesEngine(tagger=self.tagger, storage_path=data / "rules.json")
-        self.rules.set_click_callback(lambda x, y: self.device.click(x, y))
+        self.rules.set_click_callback(lambda x, y: None)
 
         self.mirror_on = False
         self.current_element = None
@@ -428,7 +428,11 @@ class CompactController(ctk.CTk):
                     self._controllers[serial] = PhoneController(self, serial)
                     log(f"controller {serial}")
             for ctl in self._controllers.values():
-                ctl.poke()
+                year = ctl.year
+                pending_stream = bool(self._year_url.get(year)) and ctl.stream_token != self._year_token.get(year, 0)
+                pending_close = ctl.want_close != ctl.did_close
+                if (not year) or self._year_on.get(year) or pending_stream or pending_close:
+                    ctl.poke()
             n2024 = sum(1 for c in self._controllers.values() if c.year == "2024")
             n2025 = sum(1 for c in self._controllers.values() if c.year == "2025")
             stamp = (len(rows), len(self._controllers), n2024, n2025)
@@ -437,44 +441,62 @@ class CompactController(ctk.CTk):
                 log(f"adb {len(rows)} controllers {len(self._controllers)} 2024 {n2024} 2025 {n2025}")
 
     def _click_look(self, serial: str) -> str:
-        """Tap every visible rule, then look. miss means the tap did not land."""
+        """This phone only. Look, tap one element, look again before the next press."""
         from core.hierarchy import parse_hierarchy_xml
-        from core.match import clicks_for_device
+        from core.match import clicks_for_device, model_year
+        year = self._phone_year(serial)
+        if not self._year_on.get(year):
+            return "idle"
+        rules = []
+        for rule in self.rules.rules:
+            fam = rule.get("family") or []
+            if not isinstance(fam, (list, tuple)):
+                fam = [fam]
+            if model_year(*[str(part) for part in fam]) == year:
+                rules.append(rule)
+        if not rules:
+            return "idle"
         try:
             xml = self._dump_serial(serial)
         except Exception as exc:
             self._why_set(serial, "could not see the screen")
             log(f"{serial} look failed {exc}")
-            return "miss"
+            return "idle"
         root = parse_hierarchy_xml(xml)
         family = self.device.identity(serial).get("family") or []
         wm = self.device.wm_for(serial)
         taps, seen = clicks_for_device(
-            self.tagger, self.rules.rules, root, family, wm, serial=serial, hold=None,
+            self.tagger, rules, root, family, wm, serial=serial, hold=None,
         )
         if not taps:
             return "idle"
-        try:
-            for x, y in taps:
+        pressed = False
+        for tag, (x, y) in zip(seen, taps):
+            if not self._year_on.get(year):
+                return "idle"
+            try:
                 self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
-        except Exception as exc:
-            self._why_set(serial, "tap was not sent")
-            log(f"{serial} tap failed {exc}")
-            return "miss"
-        time.sleep(0.6)
-        try:
-            xml2 = self._dump_serial(serial)
-        except Exception as exc:
-            self._why_set(serial, "could not check the tap")
-            log(f"{serial} recheck failed {exc}")
-            return "miss"
-        root2 = parse_hierarchy_xml(xml2)
-        _again, seen2 = clicks_for_device(
-            self.tagger, self.rules.rules, root2, family, wm, serial=serial, hold=None,
-        )
-        if set(seen) & set(seen2):
-            return "miss"
-        return "hit"
+            except Exception as exc:
+                self._why_set(serial, "tap was not sent")
+                log(f"{serial} tap failed {exc}")
+                return "miss"
+            pressed = True
+            time.sleep(0.6)
+            if not self._year_on.get(year):
+                return "idle"
+            try:
+                xml2 = self._dump_serial(serial)
+            except Exception as exc:
+                self._why_set(serial, "could not check the tap")
+                log(f"{serial} recheck failed {exc}")
+                return "miss"
+            root2 = parse_hierarchy_xml(xml2)
+            _again, seen2 = clicks_for_device(
+                self.tagger, rules, root2, family, wm, serial=serial, hold=None,
+            )
+            if tag in seen2:
+                return "miss"
+        return "hit" if pressed else "idle"
 
     def _deliver_stream(self, serial: str, url: str) -> bool:
         try:
@@ -1456,35 +1478,7 @@ class CompactController(ctk.CTk):
         self._rules_job = self.after(1200, self._rules_tick)
 
     def _fire_device(self, serial: str) -> int:
-        from core.hierarchy import parse_hierarchy_xml
-        try:
-            try:
-                xml = self._dump_serial(serial)
-            except Exception as exc:
-                log(f"{serial} dump failed {exc}")
-                return 0
-            root = parse_hierarchy_xml(xml)
-            from core.match import clicks_for_device
-            family = self.device.identity(serial).get("family") or []
-            wm = self.device.wm_for(serial)
-            taps, seen = clicks_for_device(
-                self.tagger, self.rules.rules, root, family, wm, serial=serial,
-                hold=self._held.get(serial),
-            )
-            self._held[serial] = set(seen)
-            if taps:
-                log(f"{serial} tap {taps}")
-            sent = 0
-            for x, y in taps:
-                try:
-                    self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
-                    sent += 1
-                except Exception as exc:
-                    log(f"{serial} tap failed {exc}")
-            return sent
-        finally:
-            with self._busy_lock:
-                self._busy_serials.discard(serial)
+        return 0
 
 
 def main():

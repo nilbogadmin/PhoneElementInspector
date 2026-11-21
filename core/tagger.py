@@ -99,6 +99,8 @@ class Tagger:
         from .match import exact_element
 
         data = self.tags.get(tag_name) or {}
+        if not self._allowed(data, family, serial):
+            return None
         exact = data.get("exact")
         if not exact:
             return None
