@@ -119,11 +119,6 @@ class CompactController(ctk.CTk):
         self.header = ctk.CTkFrame(self, height=HEAD_H, fg_color=SURFACE, corner_radius=12)
         self.header.pack(fill="x", side="top", pady=(0, 4))
         self.header.pack_propagate(False)
-        self.dev_label = ctk.CTkLabel(
-            self.header, text="looking", text_color=LABEL, width=140,
-            font=ctk.CTkFont(family="Poppins Condensed", size=16, weight="bold"),
-        )
-        self.dev_label.pack(side="left", padx=8)
         self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
         self.drag_zone.pack(side="left", fill="both", expand=True)
         self.close_btn = ctk.CTkButton(
@@ -642,15 +637,6 @@ class CompactController(ctk.CTk):
         self._detect_job = self.after(2000, self._detect_tick)
 
     def _detect_worker(self):
-        try:
-            rows = self.device.adb_rows()
-            online = sum(1 for _s, state in rows if state == "device")
-            off = len(rows) - online
-            text = f"{online} phones" if not off else f"{online} phones, {off} off"
-        except Exception as exc:
-            text = "adb failed"
-            log(f"adb devices failed {exc}")
-        self.after(0, lambda t=text: self.dev_label.configure(text=t))
         try:
             self._sync_controllers()
         except Exception as exc:
@@ -1300,8 +1286,8 @@ class CompactController(ctk.CTk):
             self._rule_busy = False
 
     def _adb_bin(self) -> str:
-        from core.adb import adb_bin
-        return adb_bin()
+        import shutil
+        return shutil.which("adb") or "adb"
 
     def _adb_flags(self) -> dict:
         import sys
@@ -1331,7 +1317,7 @@ class CompactController(ctk.CTk):
             raise
 
     def _adb_states(self):
-        out = self._adb_host(["devices"], timeout=8)
+        out = self._adb_host(["devices"], timeout=5)
         rows = []
         for line in out.decode("utf-8", "replace").splitlines()[1:]:
             parts = line.split()
