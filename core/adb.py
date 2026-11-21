@@ -6,7 +6,7 @@ import subprocess
 import sys
 import threading
 
-_GATE = threading.Semaphore(8)
+_GATE = threading.Semaphore(16)
 
 
 def adb_bin() -> str:
@@ -30,15 +30,18 @@ def call(args, timeout: float = 20) -> bytes:
 
 
 def devices() -> list:
-    """Every serial adb currently knows about. No cap."""
+    """Every serial adb currently knows about. Does not restart a server that is already up."""
     try:
-        call(["start-server"], timeout=15)
+        out = call(["devices"], timeout=8)
     except Exception:
-        pass
-    out = call(["devices", "-l"], timeout=30)
+        try:
+            call(["start-server"], timeout=15)
+        except Exception:
+            pass
+        out = call(["devices"], timeout=8)
     rows = []
     for line in out.decode("utf-8", "replace").splitlines()[1:]:
         parts = line.split()
-        if len(parts) >= 2 and parts[1] in ("device", "offline", "unauthorized", "authorizing"):
+        if len(parts) >= 2:
             rows.append((parts[0], parts[1]))
     return rows

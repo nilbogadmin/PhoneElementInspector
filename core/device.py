@@ -68,16 +68,18 @@ class DeviceConnector:
     def _connect_real(self) -> str:
         try:
             import uiautomator2 as u2
-            import adbutils
-            devices = adbutils.adb.device_list()
-            if not devices:
+            from .panda import phones
+            found = phones()
+            serials = [phone["serial"] for phone in found]
+            if not serials:
+                import adbutils
+                serials = [d.serial for d in adbutils.adb.device_list()]
+            if not serials:
                 self.device = None
                 self.serial = None
                 return "No ADB device found"
-            trainers = self.list_devices()
-            first = trainers[0][0] if trainers else devices[0].serial
-            self.serial = first
-            self.device = u2.connect(first)
+            self.serial = serials[0]
+            self.device = u2.connect(self.serial)
             info = self.device.info
             self.screen_size = (
                 info.get("displayWidth", 1080),
@@ -103,15 +105,28 @@ class DeviceConnector:
         except Exception:
             remembered = {}
         try:
-            from .adb import devices as adb_devices
-            serials = [serial for serial, state in adb_devices() if state == "device"]
-            self._last_serials = list(serials)
+            from .panda import phones
+            found = phones()
         except Exception:
-            serials = list(getattr(self, "_last_serials", []))
+            found = []
+        serials = []
         years = {}
-        if serials:
+        if found:
+            for phone in found:
+                serial = phone["serial"]
+                serials.append(serial)
+                years[serial] = model_year(phone.get("model") or "") or remembered.get(serial, "")
+        else:
+            try:
+                from .adb import devices as adb_devices
+                serials = [serial for serial, state in adb_devices() if state == "device"]
+                self._last_serials = list(serials)
+            except Exception:
+                serials = list(getattr(self, "_last_serials", []))
+        unknown = [serial for serial in serials if years.get(serial) not in ("2024", "2025")]
+        if unknown:
             pool = ThreadPoolExecutor(max_workers=4)
-            futs = {pool.submit(self.identity, serial): serial for serial in serials}
+            futs = {pool.submit(self.identity, serial): serial for serial in unknown}
             for fut in as_completed(futs):
                 serial = futs[fut]
                 try:

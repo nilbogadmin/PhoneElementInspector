@@ -125,7 +125,12 @@ def tap_xy(el: UIElement, root: UIElement, wm_sizes: Sequence[Tuple[int, int]] =
         if abs(best[0] - hw) >= 4 or abs(best[1] - hh) >= 8:
             tw, th = best
     raw = _box(el)
-    return int(round((raw[0] + raw[2]) / 2.0)), int(round((raw[1] + raw[3]) / 2.0))
+    sx = tw / float(hw)
+    sy = th / float(hh)
+    return (
+        int(round((raw[0] + raw[2]) / 2.0 * sx)),
+        int(round((raw[1] + raw[3]) / 2.0 * sy)),
+    )
 
 
 def _box(el: UIElement):
@@ -180,18 +185,24 @@ def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
     """
     if not saved or not in_top_half(el, root):
         return False
+    if not getattr(el, "clickable", False):
+        return False
     if (el.class_name or "") != (saved.get("class_name") or ""):
         return False
     saved_id = saved.get("resource_id") or ""
-    if saved_id and (el.resource_id or "") != saved_id:
+    if not saved_id or (el.resource_id or "") != saved_id:
         return False
-    if not saved_id:
-        if (el.text or "") != (saved.get("text") or ""):
-            return False
-        if (el.content_desc or "") != (saved.get("content_desc") or ""):
-            return False
+    saved_text = saved.get("text") or ""
+    if saved_text and (el.text or "") != saved_text:
+        return False
     raw = _box(el)
-    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.04)
+    saved_bounds = saved.get("bounds") or ()
+    if len(saved_bounds) == 4:
+        saved_area = max(1, (saved_bounds[2] - saved_bounds[0]) * (saved_bounds[3] - saved_bounds[1]))
+        live_area = max(1, (raw[2] - raw[0]) * (raw[3] - raw[1]))
+        if not 0.65 <= (live_area / float(saved_area)) <= 1.45:
+            return False
+    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.015)
 
 
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None, hold=None):

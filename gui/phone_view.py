@@ -269,7 +269,10 @@ class PhoneView(ctk.CTkFrame):
             ix, iy = self._xy_to_img(x, y)
             if ix < -40 or iy < -40 or ix > img_w + 40 or iy > img_h + 40:
                 return None
-            return pick_element(self.elements, ix, iy, img_w, img_h, slop=16)
+            clickable = pick_element(self.elements, ix, iy, img_w, img_h, slop=6, clickable_only=True)
+            if clickable is not None:
+                return clickable
+            return pick_element(self.elements, ix, iy, img_w, img_h, slop=4, clickable_only=False)
 
         points = self._canvas_points(event) or [(float(getattr(event, "x", 0)), float(getattr(event, "y", 0)))]
         if getattr(event, "widget", None) is self.canvas:

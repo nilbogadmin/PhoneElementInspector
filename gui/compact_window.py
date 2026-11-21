@@ -475,13 +475,13 @@ class CompactController(ctk.CTk):
             if not self._year_on.get(year):
                 return "idle"
             try:
-                self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+                self._tap_serial(serial, x, y)
             except Exception as exc:
                 self._why_set(serial, "tap was not sent")
                 log(f"{serial} tap failed {exc}")
                 return "miss"
             pressed = True
-            time.sleep(0.6)
+            time.sleep(0.2)
             if not self._year_on.get(year):
                 return "idle"
             try:
@@ -707,6 +707,8 @@ class CompactController(ctk.CTk):
     def _phone_year(self, serial: str) -> str:
         from core.match import model_year
         remembered = self._years.get(serial) or ""
+        if remembered in ("2024", "2025"):
+            return remembered
         try:
             info = self.device.identity(serial)
         except Exception:
@@ -1032,7 +1034,7 @@ class CompactController(ctk.CTk):
             if self._inside(self.run_btn, x_root, y_root) and not self._owned_by(event.widget, self.run_btn):
                 self._toggle_rules()
                 return "break"
-            if self._inside(self.reset_btn, x_root, y_root) and not self._owned_by(event.widget, self.reset_btn):
+            if self._inside(self.reset_btn, x_root, y_root):
                 self._reset_rules()
                 return "break"
             if self._inside(self.apps_btn, x_root, y_root) and not self._owned_by(event.widget, self.apps_btn):
@@ -1216,10 +1218,23 @@ class CompactController(ctk.CTk):
         self._show_overlay(f"Added {name}")
 
     def _reset_rules(self):
+        count = 0
+        for entry in (self.rules.apps or {}).values():
+            count += len((entry or {}).get("rules") or [])
+        self._year_on = {"2024": False, "2025": False}
+        self._paint_run_btn()
+        self._paint_years()
+        if self._rules_job:
+            try:
+                self.after_cancel(self._rules_job)
+            except Exception:
+                pass
+            self._rules_job = None
         self.rules.apps = {"demo": {"rules": [], "crop": None}}
         self.rules.active_package = "demo"
+        self.rules.last_matched = {}
         self.rules.save()
-        self.tagger.tags.clear()
+        self.tagger.tags = {}
         self.tagger.save()
         self._held = {}
         self.current_element = None
@@ -1227,8 +1242,8 @@ class CompactController(ctk.CTk):
         self._tree_sig_val = None
         if self.root_element is not None:
             self._apply_hierarchy(self.root_element)
-        self._show_overlay("Cleared")
-        log("RESET")
+        self._show_overlay(f"Cleared {count}")
+        log(f"RESET {count}")
 
     def _close_apps(self):
         self._show_overlay("Closing")
@@ -1337,7 +1352,17 @@ class CompactController(ctk.CTk):
             self._why_set(serial, str(exc) or "adb failed")
             raise
 
+    def _tap_serial(self, serial: str, x: int, y: int):
+        from core.panda import shell
+        if shell(serial, f"input tap {int(x)} {int(y)}"):
+            return
+        self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=4)
+
     def _adb_states(self):
+        from core.panda import phones
+        found = phones()
+        if found:
+            return [(phone["serial"], "device") for phone in found]
         from core.adb import devices
         return devices()
 
@@ -1448,16 +1473,7 @@ class CompactController(ctk.CTk):
         self._adb_refresh_busy = False
 
     def _dump_serial(self, serial: str) -> str:
-        try:
-            self._adb_call(serial, ["shell", "rm", "-f", "/data/local/tmp/pei.xml"], timeout=3)
-            self._adb_call(serial, ["shell", "uiautomator", "dump", "/data/local/tmp/pei.xml"], timeout=8)
-            data = self._adb_call(serial, ["exec-out", "cat", "/data/local/tmp/pei.xml"], timeout=5)
-        except Exception:
-            try:
-                self._adb_call(serial, ["shell", "pkill", "-f", "uiautomator"], timeout=3)
-            except Exception:
-                pass
-            raise
+        data = self._adb_call(serial, ["exec-out", "uiautomator", "dump", "/dev/tty"], timeout=6)
         text = data.decode("utf-8", "replace")
         start = text.find("<hierarchy")
         if start < 0:
