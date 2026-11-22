@@ -105,6 +105,13 @@ class Tagger:
         if not exact:
             return None
         hits = [el for el in flatten_elements(root) if exact_element(exact, el, root)]
+        if not hits and exact.get("resource_id"):
+            from .match import in_top_half
+            saved_id = exact.get("resource_id") or ""
+            hits = [
+                el for el in flatten_elements(root)
+                if (el.resource_id or "") == saved_id and in_top_half(el, root)
+            ]
         if not hits:
             return None
         if len(hits) == 1:

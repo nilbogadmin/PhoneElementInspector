@@ -446,7 +446,7 @@ class CompactController(ctk.CTk):
         from core.match import clicks_for_device
         if not any(self._year_on.values()):
             return "idle"
-        rules = [rule for rule in self.rules.rules if rule.get("enabled", True)]
+        rules = self._all_rules()
         if not rules:
             return "idle"
         try:
@@ -1364,11 +1364,17 @@ class CompactController(ctk.CTk):
             self._why_set(serial, str(exc) or "adb failed")
             raise
 
+    def _all_rules(self):
+        rules = []
+        for entry in (self.rules.apps or {}).values():
+            rules.extend((entry or {}).get("rules") or [])
+        if not rules:
+            rules = list(self.rules.rules)
+        return [rule for rule in rules if rule.get("enabled", True)]
+
     def _tap_serial(self, serial: str, x: int, y: int):
-        from core.panda import shell
-        if shell(serial, f"input tap {int(x)} {int(y)}"):
-            return
-        self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=4)
+        self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+        log(f"{serial} tap {int(x)} {int(y)}")
 
     def _adb_states(self):
         from core.panda import phones
@@ -1443,11 +1449,8 @@ class CompactController(ctk.CTk):
         self._adb_refresh_busy = False
 
     def _dump_serial(self, serial: str) -> str:
-        data = self._adb_call(
-            serial,
-            ["exec-out", "sh", "-c", "uiautomator dump /data/local/tmp/pei.xml >/dev/null 2>&1; cat /data/local/tmp/pei.xml"],
-            timeout=8,
-        )
+        self._adb_call(serial, ["shell", "uiautomator", "dump", "/data/local/tmp/pei.xml"], timeout=8)
+        data = self._adb_call(serial, ["exec-out", "cat", "/data/local/tmp/pei.xml"], timeout=5)
         text = data.decode("utf-8", "replace")
         start = text.find("<hierarchy")
         if start < 0:

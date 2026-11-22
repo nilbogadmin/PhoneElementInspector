@@ -185,19 +185,16 @@ def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
     """
     if not saved or not in_top_half(el, root):
         return False
-    if (el.class_name or "") != (saved.get("class_name") or ""):
-        return False
     saved_id = saved.get("resource_id") or ""
-    if saved_id:
-        if (el.resource_id or "") != saved_id:
-            return False
-    else:
-        if (el.text or "") != (saved.get("text") or ""):
-            return False
-        if (el.content_desc or "") != (saved.get("content_desc") or ""):
-            return False
+    if saved_id and (el.resource_id or "") != saved_id:
+        return False
+    if not saved_id and (el.class_name or "") != (saved.get("class_name") or ""):
+        return False
+    saved_text = saved.get("text") or ""
+    if not saved_id and saved_text and (el.text or "") != saved_text:
+        return False
     raw = _box(el)
-    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.03)
+    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.06)
 
 
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None, hold=None):

@@ -61,6 +61,14 @@ class PhoneController:
         if close_n != self.did_close:
             self._close_apps()
             self.did_close = close_n
+        if any(app._year_on.values()):
+            result = app._click_look(serial)
+            if result == "miss":
+                app._why_set(serial, f"tap still there try {self.fails + 1}/5")
+                self._note_fail(app._year_url.get(self.year) or "")
+            elif result == "hit":
+                app._why_set(serial, "tap landed")
+                self._note_ok()
         if year not in ("2024", "2025"):
             app._why_set(serial, "reading model")
             return
@@ -87,15 +95,6 @@ class PhoneController:
                 app._why_set(serial, f"stream not open try {self.fails + 1}/5")
                 log(f"{serial} stream again")
                 self._note_fail(url)
-        if any(app._year_on.values()):
-            result = app._click_look(serial)
-            live = app._year_url.get(year) or ""
-            if result == "miss":
-                app._why_set(serial, f"tap still there try {self.fails + 1}/5")
-                self._note_fail(live)
-            elif result == "hit":
-                app._why_set(serial, "tap landed")
-                self._note_ok()
         now = time.monotonic()
         if now - self.full_at > 300:
             self.full_at = now
