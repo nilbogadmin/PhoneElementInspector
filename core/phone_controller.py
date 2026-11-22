@@ -62,11 +62,7 @@ class PhoneController:
             self._close_apps()
             self.did_close = close_n
         if year not in ("2024", "2025"):
-            if not app._adb_alive(serial):
-                app._why_set(serial, "adb down")
-                self._reconnect()
-            else:
-                app._why_set(serial, "reading model")
+            app._why_set(serial, "reading model")
             return
         self.year = year
         token = app._year_token.get(year, 0)

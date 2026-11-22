@@ -185,24 +185,19 @@ def exact_element(saved: dict, el: UIElement, root: UIElement) -> bool:
     """
     if not saved or not in_top_half(el, root):
         return False
-    if not getattr(el, "clickable", False):
-        return False
     if (el.class_name or "") != (saved.get("class_name") or ""):
         return False
     saved_id = saved.get("resource_id") or ""
-    if not saved_id or (el.resource_id or "") != saved_id:
-        return False
-    saved_text = saved.get("text") or ""
-    if saved_text and (el.text or "") != saved_text:
-        return False
-    raw = _box(el)
-    saved_bounds = saved.get("bounds") or ()
-    if len(saved_bounds) == 4:
-        saved_area = max(1, (saved_bounds[2] - saved_bounds[0]) * (saved_bounds[3] - saved_bounds[1]))
-        live_area = max(1, (raw[2] - raw[0]) * (raw[3] - raw[1]))
-        if not 0.65 <= (live_area / float(saved_area)) <= 1.45:
+    if saved_id:
+        if (el.resource_id or "") != saved_id:
             return False
-    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.015)
+    else:
+        if (el.text or "") != (saved.get("text") or ""):
+            return False
+        if (el.content_desc or "") != (saved.get("content_desc") or ""):
+            return False
+    raw = _box(el)
+    return same_box(saved.get("bounds") or (), saved.get("screen") or (), raw, screen_size(root), tol=0.03)
 
 
 def clicks_for_device(tagger, rules: Iterable[dict], root: UIElement, family, wm_sizes=(), serial=None, hold=None):

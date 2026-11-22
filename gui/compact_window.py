@@ -456,10 +456,8 @@ class CompactController(ctk.CTk):
             log(f"{serial} look failed {exc}")
             return "idle"
         root = parse_hierarchy_xml(xml)
-        family = self.device.identity(serial).get("family") or []
-        wm = self.device.wm_for(serial)
         taps, seen = clicks_for_device(
-            self.tagger, rules, root, family, wm, serial=serial, hold=None,
+            self.tagger, rules, root, [], (), serial=serial, hold=None,
         )
         if not taps:
             return "idle"
@@ -485,7 +483,7 @@ class CompactController(ctk.CTk):
                 return "miss"
             root2 = parse_hierarchy_xml(xml2)
             _again, seen2 = clicks_for_device(
-                self.tagger, rules, root2, family, wm, serial=serial, hold=None,
+                self.tagger, rules, root2, [], (), serial=serial, hold=None,
             )
             if tag in seen2:
                 return "miss"
@@ -1437,57 +1435,19 @@ class CompactController(ctk.CTk):
             return False
 
     def _adb_refresh(self):
-        """Every minute, ping every phone and reconnect any link that is not up."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        """Re-read the phones Panda already has. Do not restart adb."""
         try:
-            try:
-                self._adb_host(["start-server"], timeout=8)
-            except Exception:
-                pass
-            rows = self._adb_states()
-            bad = set(self._adb_bad)
-            self._adb_bad = set()
-            targets = []
-            live = []
-            for serial, state in rows:
-                if state == "unauthorized":
-                    continue
-                if state != "device" or serial in bad:
-                    targets.append(serial)
-                else:
-                    live.append(serial)
-            if live:
-                with ThreadPoolExecutor(max_workers=8) as pool:
-                    futs = {pool.submit(self._adb_alive, serial): serial for serial in live}
-                    for fut in as_completed(futs):
-                        try:
-                            ok = fut.result()
-                        except Exception:
-                            ok = False
-                        if not ok:
-                            targets.append(futs[fut])
-            for serial in targets:
-                try:
-                    self._adb_host(["-s", serial, "reconnect"], timeout=8)
-                    try:
-                        self.device._identity.pop(serial, None)
-                    except Exception:
-                        pass
-                    log(f"adb refresh {serial}")
-                except Exception as exc:
-                    log(f"adb refresh failed {serial} {exc}")
             self._sync_controllers()
-            self._write_why()
         except Exception as exc:
             log(f"adb refresh failed {exc}")
-            try:
-                self._write_why()
-            except Exception:
-                pass
         self._adb_refresh_busy = False
 
     def _dump_serial(self, serial: str) -> str:
-        data = self._adb_call(serial, ["exec-out", "uiautomator", "dump", "/dev/tty"], timeout=6)
+        data = self._adb_call(
+            serial,
+            ["exec-out", "sh", "-c", "uiautomator dump /data/local/tmp/pei.xml >/dev/null 2>&1; cat /data/local/tmp/pei.xml"],
+            timeout=8,
+        )
         text = data.decode("utf-8", "replace")
         start = text.find("<hierarchy")
         if start < 0:

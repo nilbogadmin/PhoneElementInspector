@@ -105,17 +105,22 @@ class Tagger:
         if not exact:
             return None
         hits = [el for el in flatten_elements(root) if exact_element(exact, el, root)]
-        if len(hits) != 1:
+        if not hits:
             return None
-        return hits[0]
+        if len(hits) == 1:
+            return hits[0]
+        saved = exact.get("bounds") or (0, 0, 0, 0)
+        sx = (saved[0] + saved[2]) / 2 if len(saved) == 4 else 0
+        sy = (saved[1] + saved[3]) / 2 if len(saved) == 4 else 0
+
+        def dist(el):
+            box = getattr(el, "_raw_bounds", None) or el.bounds
+            return abs((box[0] + box[2]) / 2 - sx) + abs((box[1] + box[3]) / 2 - sy)
+
+        return min(hits, key=dist)
 
     def _allowed(self, data, family, serial) -> bool:
-        from .match import same_family
-
-        if same_family(data.get("family"), family):
-            return True
-        saved = data.get("serial") or ""
-        return bool(saved and serial and saved == serial)
+        return True
 
     def _closest(self, els, data, root: UIElement, loose: bool) -> Optional[UIElement]:
         norm = data.get("norm")
