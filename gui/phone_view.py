@@ -269,10 +269,18 @@ class PhoneView(ctk.CTkFrame):
             ix, iy = self._xy_to_img(x, y)
             if ix < -40 or iy < -40 or ix > img_w + 40 or iy > img_h + 40:
                 return None
-            clickable = pick_element(self.elements, ix, iy, img_w, img_h, slop=6, clickable_only=True)
-            if clickable is not None:
-                return clickable
-            return pick_element(self.elements, ix, iy, img_w, img_h, slop=4, clickable_only=False)
+            found = pick_element(self.elements, ix, iy, img_w, img_h, slop=18)
+            if found is not None:
+                return found
+            # The picture is the top half. Bounds can still be full-screen pixels.
+            max_b = max((el.bounds[3] for el in self.elements), default=0)
+            if max_b > img_h * 1.25:
+                scale = max_b / float(img_h)
+                return pick_element(
+                    self.elements, int(ix * scale), int(iy * scale),
+                    int(img_w * scale), int(img_h * scale), slop=24,
+                )
+            return None
 
         points = self._canvas_points(event) or [(float(getattr(event, "x", 0)), float(getattr(event, "y", 0)))]
         if getattr(event, "widget", None) is self.canvas:

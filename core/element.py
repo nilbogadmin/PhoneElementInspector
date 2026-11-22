@@ -183,7 +183,7 @@ def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int =
         if ix < l - pad or ix > r + pad or iy < t - pad or iy > b + pad:
             continue
         area = w * h
-        if img_w > 0 and img_h > 0 and area > img_w * img_h * 0.55:
+        if img_w > 0 and img_h > 0 and area > img_w * img_h * 0.92:
             continue
         if best is None or area < best_area:
             best = el
