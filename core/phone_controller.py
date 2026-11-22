@@ -55,7 +55,7 @@ class PhoneController:
     def _pass(self):
         app = self.app
         serial = self.serial
-        year = app._phone_year(serial) or self.year
+        year = self.year or (app._years.get(serial) if hasattr(app, "_years") else "") or ""
         with self.lock:
             close_n = self.want_close
         if close_n != self.did_close:

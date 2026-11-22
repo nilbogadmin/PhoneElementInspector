@@ -119,7 +119,10 @@ class CompactController(ctk.CTk):
         self.header = ctk.CTkFrame(self, height=HEAD_H, fg_color=SURFACE, corner_radius=12)
         self.header.pack(fill="x", side="top", pady=(0, 4))
         self.header.pack_propagate(False)
-        self.drag_zone = ctk.CTkLabel(self.header, text="", fg_color="transparent")
+        self.drag_zone = ctk.CTkLabel(
+            self.header, text="0 controllers", fg_color="transparent",
+            font=menu_font, text_color="#d0d0d0", anchor="w",
+        )
         self.drag_zone.pack(side="left", fill="both", expand=True)
         self.close_btn = ctk.CTkButton(
             self.header, text="X", width=54, height=32, corner_radius=8,
@@ -427,18 +430,24 @@ class CompactController(ctk.CTk):
                 if serial not in self._controllers:
                     self._controllers[serial] = PhoneController(self, serial)
                     log(f"controller {serial}")
+            running = any(self._year_on.values())
             for ctl in self._controllers.values():
                 year = ctl.year
                 pending_stream = bool(self._year_url.get(year)) and ctl.stream_token != self._year_token.get(year, 0)
                 pending_close = ctl.want_close != ctl.did_close
-                if (not year) or self._year_on.get(year) or pending_stream or pending_close:
+                if running or (not year) or pending_stream or pending_close:
                     ctl.poke()
+            n = len(self._controllers)
             n2024 = sum(1 for c in self._controllers.values() if c.year == "2024")
             n2025 = sum(1 for c in self._controllers.values() if c.year == "2025")
-            stamp = (len(rows), len(self._controllers), n2024, n2025)
+            stamp = (len(rows), n, n2024, n2025, running)
             if stamp != getattr(self, "_farm_stamp", None):
                 self._farm_stamp = stamp
-                log(f"adb {len(rows)} controllers {len(self._controllers)} 2024 {n2024} 2025 {n2025}")
+                log(f"controllers {n} adb {len(rows)} 2024 {n2024} 2025 {n2025}")
+                try:
+                    self.after(0, lambda count=n, go=running: self._paint_controllers(count, go))
+                except Exception:
+                    pass
 
     def _click_look(self, serial: str) -> str:
         """This phone only. Look, tap one element, look again before the next press."""
@@ -649,11 +658,18 @@ class CompactController(ctk.CTk):
             threading.Thread(target=self._detect_worker, daemon=True).start()
         self._detect_job = self.after(2000, self._detect_tick)
 
+    def _paint_controllers(self, count: int, clicking: bool):
+        word = "clicking" if clicking else "idle"
+        self.drag_zone.configure(text=f"{count} controllers {word}")
+
     def _detect_worker(self):
         try:
             self._sync_controllers()
         except Exception as exc:
             log(f"controller sync failed {exc}")
+        if any(self._year_on.values()):
+            self._detect_busy = False
+            return
         try:
             pairs = self.device.list_devices()
         except Exception:
@@ -1206,7 +1222,13 @@ class CompactController(ctk.CTk):
             f"text={self.current_element.text or '-'} "
             f"bounds={list(raw)}"
         )
-        self._show_overlay(f"Added {name}")
+        n = len(self._controllers)
+        if any(self._year_on.values()):
+            for ctl in self._controllers.values():
+                ctl.poke()
+            self._show_overlay(f"Added {name} · {n} clicking")
+        else:
+            self._show_overlay(f"Added {name} · {n} controllers")
 
     def _reset_rules(self):
         count = 0
@@ -1281,12 +1303,13 @@ class CompactController(ctk.CTk):
         self._paint_years()
         if running:
             self._show_overlay("Stopped")
+            self._paint_controllers(len(self._controllers), False)
             log("STOP")
             if self._rules_job:
                 self.after_cancel(self._rules_job)
                 self._rules_job = None
             return
-        self._show_overlay("Running")
+        self._show_overlay(f"Clicking {len(self._controllers)}")
         log("START")
         if self._rules_job is None:
             self._rules_tick()
@@ -1300,6 +1323,7 @@ class CompactController(ctk.CTk):
             pass
         for ctl in list(self._controllers.values()):
             ctl.poke()
+        self._paint_controllers(len(self._controllers), True)
         self._rules_job = self.after(1200, self._rules_tick)
 
     def _rules_round(self):
@@ -1377,12 +1401,26 @@ class CompactController(ctk.CTk):
         log(f"{serial} tap {int(x)} {int(y)}")
 
     def _adb_states(self):
-        from core.panda import phones
-        found = phones()
-        if found:
-            return [(phone["serial"], "device") for phone in found]
-        from core.adb import devices
-        return devices()
+        rows = []
+        seen = set()
+        try:
+            from core.adb import devices
+            for serial, state in devices():
+                if serial not in seen:
+                    rows.append((serial, state))
+                    seen.add(serial)
+        except Exception as exc:
+            log(f"adb list failed {exc}")
+        try:
+            from core.panda import phones
+            for phone in phones():
+                serial = phone.get("serial") or ""
+                if serial and serial not in seen:
+                    rows.append((serial, "device"))
+                    seen.add(serial)
+        except Exception:
+            pass
+        return rows
 
     def _why_set(self, serial: str, text: str):
         reason = " ".join(str(text or "").split())[:180]
