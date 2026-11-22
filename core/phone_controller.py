@@ -56,6 +56,11 @@ class PhoneController:
         app = self.app
         serial = self.serial
         year = app._phone_year(serial) or self.year
+        with self.lock:
+            close_n = self.want_close
+        if close_n != self.did_close:
+            self._close_apps()
+            self.did_close = close_n
         if year not in ("2024", "2025"):
             if not app._adb_alive(serial):
                 app._why_set(serial, "adb down")
@@ -64,11 +69,6 @@ class PhoneController:
                 app._why_set(serial, "reading model")
             return
         self.year = year
-        with self.lock:
-            close_n = self.want_close
-        if close_n != self.did_close:
-            self._close_apps()
-            self.did_close = close_n
         token = app._year_token.get(year, 0)
         url = app._year_url.get(year) or ""
         if url and token != self.stream_token:
@@ -91,7 +91,7 @@ class PhoneController:
                 app._why_set(serial, f"stream not open try {self.fails + 1}/5")
                 log(f"{serial} stream again")
                 self._note_fail(url)
-        if app._year_on.get(year):
+        if any(app._year_on.values()):
             result = app._click_look(serial)
             live = app._year_url.get(year) or ""
             if result == "miss":
@@ -155,15 +155,15 @@ class PhoneController:
             log(f"{self.serial} app reload failed {exc}")
 
     def _close_apps(self):
-        while not self.stop.is_set():
-            try:
-                self.app._adb_call(self.serial, ["shell", _CLOSE], timeout=30)
+        from .panda import shell
+        try:
+            if shell(self.serial, _CLOSE, timeout=12):
                 log(f"{self.serial} apps closed")
                 return
-            except Exception as exc:
-                log(f"{self.serial} close again {exc}")
-                self._reconnect()
-                self.stop.wait(2)
+            self.app._adb_call(self.serial, ["shell", _CLOSE], timeout=20)
+            log(f"{self.serial} apps closed")
+        except Exception as exc:
+            log(f"{self.serial} close failed {exc}")
 
     def _fullscreen(self):
         want = "immersive.full=com.whatnot_mobile"

@@ -443,17 +443,10 @@ class CompactController(ctk.CTk):
     def _click_look(self, serial: str) -> str:
         """This phone only. Look, tap one element, look again before the next press."""
         from core.hierarchy import parse_hierarchy_xml
-        from core.match import clicks_for_device, model_year
-        year = self._phone_year(serial)
-        if not self._year_on.get(year):
+        from core.match import clicks_for_device
+        if not any(self._year_on.values()):
             return "idle"
-        rules = []
-        for rule in self.rules.rules:
-            fam = rule.get("family") or []
-            if not isinstance(fam, (list, tuple)):
-                fam = [fam]
-            if model_year(*[str(part) for part in fam]) == year:
-                rules.append(rule)
+        rules = [rule for rule in self.rules.rules if rule.get("enabled", True)]
         if not rules:
             return "idle"
         try:
@@ -472,7 +465,7 @@ class CompactController(ctk.CTk):
             return "idle"
         pressed = False
         for tag, (x, y) in zip(seen, taps):
-            if not self._year_on.get(year):
+            if not any(self._year_on.values()):
                 return "idle"
             try:
                 self._tap_serial(serial, x, y)
@@ -482,7 +475,7 @@ class CompactController(ctk.CTk):
                 return "miss"
             pressed = True
             time.sleep(0.2)
-            if not self._year_on.get(year):
+            if not any(self._year_on.values()):
                 return "idle"
             try:
                 xml2 = self._dump_serial(serial)
@@ -1037,7 +1030,7 @@ class CompactController(ctk.CTk):
             if self._inside(self.reset_btn, x_root, y_root):
                 self._reset_rules()
                 return "break"
-            if self._inside(self.apps_btn, x_root, y_root) and not self._owned_by(event.widget, self.apps_btn):
+            if self._inside(self.apps_btn, x_root, y_root):
                 self._close_apps()
                 return "break"
             for year, btn in self.year_btns.items():
@@ -1250,32 +1243,53 @@ class CompactController(ctk.CTk):
         threading.Thread(target=self._close_apps_worker, daemon=True).start()
 
     def _close_apps_worker(self):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from core.phone_controller import _CLOSE
+        from core.panda import shell
         self._sync_controllers()
-        ctrls = list(self._controllers.values())
-        for ctl in ctrls:
-            ctl.request_close()
-        self.after(0, lambda n=len(ctrls): self._show_overlay(f"Closing {n}"))
+        try:
+            serials = [serial for serial, state in self._adb_states() if state == "device"]
+        except Exception:
+            serials = []
+        if not serials:
+            serials = list(self._controllers)
+        def one(serial):
+            if shell(serial, _CLOSE, timeout=12):
+                log(f"{serial} apps closed")
+                return
+            try:
+                self._adb_call(serial, ["shell", _CLOSE], timeout=20)
+                log(f"{serial} apps closed")
+            except Exception as exc:
+                log(f"{serial} close failed {exc}")
+        if serials:
+            pool = ThreadPoolExecutor(max_workers=8)
+            futs = [pool.submit(one, serial) for serial in serials]
+            for fut in as_completed(futs):
+                try:
+                    fut.result()
+                except Exception:
+                    pass
+            pool.shutdown(wait=False)
+        self.after(0, lambda n=len(serials): self._show_overlay(f"Closed {n}"))
 
     def _any_rules(self) -> bool:
         return any(self._year_on.values())
 
     def _toggle_rules(self):
-        year = self._active_year
-        if self._year_on.get(year):
-            self._year_on[year] = False
-            self._paint_run_btn()
-            self._paint_years()
-            self._show_overlay(f"{year} stopped")
-            log(f"STOP {year}")
-            if not self._any_rules() and self._rules_job:
+        running = any(self._year_on.values())
+        self._year_on = {"2024": not running, "2025": not running}
+        self._paint_run_btn()
+        self._paint_years()
+        if running:
+            self._show_overlay("Stopped")
+            log("STOP")
+            if self._rules_job:
                 self.after_cancel(self._rules_job)
                 self._rules_job = None
             return
-        self._year_on[year] = True
-        self._paint_run_btn()
-        self._paint_years()
-        self._show_overlay(f"{year} running")
-        log(f"START {year}")
+        self._show_overlay("Running")
+        log("START")
         if self._rules_job is None:
             self._rules_tick()
 
