@@ -104,6 +104,7 @@ class CompactController(ctk.CTk):
         self._why = {}
         self._years = self._load_years()
 
+        self._fit_ui()
         self._build_ui()
         self._place_center()
         self.after(200, self._initial_load)
@@ -113,11 +114,33 @@ class CompactController(ctk.CTk):
         self._bind_drag()
         log("ready")
 
-    def _build_ui(self):
-        btn_font = ctk.CTkFont(family="Poppins Condensed", size=22, weight="bold")
-        menu_font = ctk.CTkFont(family="Poppins Condensed", size=18, weight="bold")
+    def _fit_ui(self):
+        """The full layout is 900px wide and about 1500px tall. Shrink it to this screen."""
+        sw = self.winfo_screenwidth() or 1920
+        sh = self.winfo_screenheight() or 1080
+        design_h = int(BAR_W * PHONE_ASPECT) + BAR_H + HEAD_H + URL_H + SLOT_H + 28
+        scale = min(1.0, max(640, sh - 96) / design_h, max(520, sw - 32) / BAR_W)
 
-        self.header = ctk.CTkFrame(self, height=HEAD_H, fg_color=SURFACE, corner_radius=12)
+        def px(n, floor=1):
+            return max(floor, int(round(n * scale)))
+
+        self._ui_w = px(BAR_W)
+        self._ui_bar = px(BAR_H, 52)
+        self._ui_head = px(HEAD_H, 30)
+        self._ui_url = px(URL_H, 28)
+        self._ui_slot = px(SLOT_H, 168)
+        self._ui_btn_w = px(200, 100)
+        self._ui_btn_h = px(60, 34)
+        self._font_btn = max(13, px(22))
+        self._font_menu = max(12, px(18))
+        self._font_slot = max(10, px(13))
+        self._font_overlay = max(12, px(18))
+
+    def _build_ui(self):
+        btn_font = ctk.CTkFont(family="Poppins Condensed", size=self._font_btn, weight="bold")
+        menu_font = ctk.CTkFont(family="Poppins Condensed", size=self._font_menu, weight="bold")
+
+        self.header = ctk.CTkFrame(self, height=self._ui_head, fg_color=SURFACE, corner_radius=12)
         self.header.pack(fill="x", side="top", pady=(0, 4))
         self.header.pack_propagate(False)
         self.drag_zone = ctk.CTkLabel(
@@ -126,26 +149,26 @@ class CompactController(ctk.CTk):
         )
         self.drag_zone.pack(side="left", fill="both", expand=True)
         self.close_btn = ctk.CTkButton(
-            self.header, text="X", width=54, height=32, corner_radius=8,
-            fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
+            self.header, text="X", width=max(36, self._font_btn * 2), height=max(24, self._ui_head - 8),
+            corner_radius=8, fg_color=RED, hover_color="#d32b22", command=self._close, font=btn_font,
         )
         self.close_btn.pack(side="right", padx=6, pady=4)
 
-        self.url_bar = ctk.CTkFrame(self, height=URL_H, fg_color=SURFACE, corner_radius=8)
+        self.url_bar = ctk.CTkFrame(self, height=self._ui_url, fg_color=SURFACE, corner_radius=8)
         self.url_bar.pack(fill="x", side="top", pady=(0, 4))
         self.url_bar.pack_propagate(False)
         self.url_entry = ctk.CTkEntry(
-            self.url_bar, height=28, corner_radius=6,
+            self.url_bar, height=max(22, self._ui_url - 8), corner_radius=6,
             fg_color=SURFACE2, border_width=0,
             font=menu_font, placeholder_text="SIGN IN PAGE",
         )
         self.url_entry.pack(fill="x", padx=8, pady=4)
         self.url_entry.bind("<Return>", self._open_guide_url)
 
-        self.slot_bar = ctk.CTkFrame(self, height=SLOT_H, fg_color=SURFACE, corner_radius=8)
+        self.slot_bar = ctk.CTkFrame(self, height=self._ui_slot, fg_color=SURFACE, corner_radius=8)
         self.slot_bar.pack(fill="x", side="top", pady=(0, 4))
         self.slot_bar.pack_propagate(False)
-        slot_font = ctk.CTkFont(family="Poppins Condensed", size=13, weight="bold")
+        slot_font = ctk.CTkFont(family="Poppins Condensed", size=self._font_slot, weight="bold")
         self.stream_btns = []
         for col in range(3):
             self.slot_bar.grid_columnconfigure(col, weight=1, uniform="stream")
@@ -153,11 +176,11 @@ class CompactController(ctk.CTk):
             self.slot_bar.grid_rowconfigure(row, weight=1, uniform="stream")
         for i in range(9):
             btn = ctk.CTkButton(
-                self.slot_bar, text=str(i + 1), height=96, corner_radius=8,
+                self.slot_bar, text=str(i + 1), height=max(48, self._ui_slot // 3 - 8), corner_radius=8,
                 fg_color=RED, hover_color="#d32b22",
                 font=slot_font, command=lambda i=i: self._streamer_click(i),
             )
-            btn.grid(row=i // 3, column=i % 3, sticky="nsew", padx=4, pady=4)
+            btn.grid(row=i // 3, column=i % 3, sticky="nsew", padx=3, pady=3)
             btn.bind("<Button-3>", lambda _e, i=i: self._rename_streamer(i))
             self.stream_btns.append(btn)
 
@@ -170,7 +193,7 @@ class CompactController(ctk.CTk):
         self.year_btns = {}
         for col, year in enumerate(("2024", "2025")):
             btn = ctk.CTkButton(
-                self.year_bar, text=year, height=40, corner_radius=8,
+                self.year_bar, text=year, height=max(28, self._font_menu + 16), corner_radius=8,
                 fg_color=SURFACE2, hover_color="#3a3a3c",
                 font=menu_font, command=lambda y=year: self._pick_year(y),
             )
@@ -188,49 +211,49 @@ class CompactController(ctk.CTk):
 
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
-            font=ctk.CTkFont(family="Poppins Condensed", size=18, weight="bold"),
+            font=ctk.CTkFont(family="Poppins Condensed", size=self._font_overlay, weight="bold"),
             fg_color="#1c1c1e", corner_radius=6, justify="center",
         )
 
-        self.bar = ctk.CTkFrame(self, height=BAR_H, fg_color=SURFACE, corner_radius=16)
+        self.bar = ctk.CTkFrame(self, height=self._ui_bar, fg_color=SURFACE, corner_radius=16)
         self.bar.pack(fill="x", side="bottom", pady=(4, 0))
         self.bar.pack_propagate(False)
 
         self._bar_inner = ctk.CTkFrame(self.bar, fg_color="transparent")
-        self._bar_inner.pack(fill="both", expand=True, padx=8, pady=6)
+        self._bar_inner.pack(fill="both", expand=True, padx=6, pady=4)
 
-        btn_w, btn_h = 200, 60
+        btn_w, btn_h = self._ui_btn_w, self._ui_btn_h
         self.add_btn = ctk.CTkButton(
             self._bar_inner, text="ADD", width=btn_w, height=btn_h, corner_radius=10,
             fg_color=GREEN, hover_color="#28b34a",
             command=self._quick_rule, font=btn_font,
         )
-        self.add_btn.pack(side="left", padx=6)
+        self.add_btn.pack(side="left", padx=4)
 
         self.run_btn = ctk.CTkButton(
             self._bar_inner, text="START", width=btn_w, height=btn_h, corner_radius=10,
             fg_color=BLUE, hover_color="#0066cc",
             command=self._toggle_rules, font=btn_font,
         )
-        self.run_btn.pack(side="left", padx=6)
+        self.run_btn.pack(side="left", padx=4)
 
         self.reset_btn = ctk.CTkButton(
             self._bar_inner, text="RESET", width=btn_w, height=btn_h, corner_radius=10,
             fg_color=SURFACE2, hover_color="#3a3a3c",
             command=self._reset_rules, font=btn_font,
         )
-        self.reset_btn.pack(side="left", padx=6)
+        self.reset_btn.pack(side="left", padx=4)
 
         self.apps_btn = ctk.CTkButton(
             self._bar_inner, text="CLOSE APPS", width=btn_w, height=btn_h, corner_radius=10,
             fg_color="#5c1a1a", hover_color="#7a2424",
             command=self._close_apps, font=btn_font,
         )
-        self.apps_btn.pack(side="left", padx=6)
+        self.apps_btn.pack(side="left", padx=4)
 
     def _window_height(self) -> int:
-        mirror_h = int(BAR_W * PHONE_ASPECT)
-        return mirror_h + BAR_H + DROP_H + HEAD_H + URL_H + SLOT_H + 36
+        mirror_h = int(self._ui_w * PHONE_ASPECT)
+        return mirror_h + self._ui_bar + self._ui_head + self._ui_url + self._ui_slot + 28
 
     def _format_geo(self, x: int, y: int) -> str:
         """Fixed size. Negative coordinates must not become '+-10' or Tk throws."""
@@ -247,7 +270,7 @@ class CompactController(ctk.CTk):
 
     def _place_center(self):
         self.update_idletasks()
-        self._win_w = BAR_W
+        self._win_w = self._ui_w
         self._win_h = self._window_height()
         self.resizable(False, False)
         self.minsize(self._win_w, self._win_h)
