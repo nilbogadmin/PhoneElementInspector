@@ -38,7 +38,7 @@ DROP_H = 48
 HEAD_H = 42
 PHONE_ASPECT = (19.5 / 9) * 0.5   # half height for top-half only
 URL_H = 36
-SLOT_H = 210
+SLOT_H = 330
 
 
 class CompactController(ctk.CTk):
@@ -93,6 +93,7 @@ class CompactController(ctk.CTk):
         self._whatnot_status = {}
         self._whatnot_busy = False
         self._whatnot_at = 0.0
+        self._whatnot_misses = {}
         self._adb_bad = set()
         self._adb_refresh_busy = False
         self._controllers = {}
@@ -144,7 +145,7 @@ class CompactController(ctk.CTk):
         self.slot_bar = ctk.CTkFrame(self, height=SLOT_H, fg_color=SURFACE, corner_radius=8)
         self.slot_bar.pack(fill="x", side="top", pady=(0, 4))
         self.slot_bar.pack_propagate(False)
-        slot_font = ctk.CTkFont(family="Poppins Condensed", size=16, weight="bold")
+        slot_font = ctk.CTkFont(family="Poppins Condensed", size=13, weight="bold")
         self.stream_btns = []
         for col in range(3):
             self.slot_bar.grid_columnconfigure(col, weight=1, uniform="stream")
@@ -152,7 +153,7 @@ class CompactController(ctk.CTk):
             self.slot_bar.grid_rowconfigure(row, weight=1, uniform="stream")
         for i in range(9):
             btn = ctk.CTkButton(
-                self.slot_bar, text=str(i + 1), height=58, corner_radius=8,
+                self.slot_bar, text=str(i + 1), height=96, corner_radius=8,
                 fg_color=RED, hover_color="#d32b22",
                 font=slot_font, command=lambda i=i: self._streamer_click(i),
             )
@@ -566,7 +567,15 @@ class CompactController(ctk.CTk):
         try:
             fresh = fetch_live([n for n in self.guide_slots if n])
             status = dict(self._whatnot_status)
-            status.update(fresh)
+            for name, info in fresh.items():
+                if info.get("online"):
+                    self._whatnot_misses[name] = 0
+                    status[name] = info
+                    continue
+                misses = self._whatnot_misses.get(name, 0) + 1
+                self._whatnot_misses[name] = misses
+                if misses >= 2 or not (status.get(name) or {}).get("online"):
+                    status[name] = info
             self._whatnot_status = status
         except Exception as exc:
             log(f"whatnot check failed {exc}")
@@ -607,8 +616,9 @@ class CompactController(ctk.CTk):
         return extra or info
 
     def _paint_streamers(self):
+        from core.whatnot_live import button_text
         now = time.monotonic()
-        if not self._whatnot_busy and (self._whatnot_at == 0 or now - self._whatnot_at > 300):
+        if not self._whatnot_busy and (self._whatnot_at == 0 or now - self._whatnot_at > 15):
             self._whatnot_busy = True
             self._whatnot_at = now
             threading.Thread(target=self._whatnot_tick, daemon=True).start()
@@ -617,7 +627,7 @@ class CompactController(ctk.CTk):
             info = self._streamer_info(name) if name else {}
             online = bool(name and info.get("online") and info.get("url"))
             btn.configure(
-                text=(name or str(i + 1)).upper(),
+                text=button_text(name, info) if name else str(i + 1),
                 fg_color=GREEN if online else RED,
                 hover_color="#28b34a" if online else "#d32b22",
             )
