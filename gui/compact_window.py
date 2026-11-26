@@ -89,6 +89,9 @@ class CompactController(ctk.CTk):
         self._busy_lock = threading.Lock()
         self._overlay_job = None
         self.guide_slots = self._load_slots()
+        from core.whatnot_live import ShowBoard
+        self.board = ShowBoard()
+        self.board.set_names(self.guide_slots)
         self.chromium = None
         self._whatnot_status = {}
         self._whatnot_busy = False
@@ -115,26 +118,21 @@ class CompactController(ctk.CTk):
         log("ready")
 
     def _fit_ui(self):
-        """The full layout is 900px wide and about 1500px tall. Shrink it to this screen."""
+        """Leave a fixed block for the nine show cards and fit the rest on this screen."""
         sw = self.winfo_screenwidth() or 1920
         sh = self.winfo_screenheight() or 1080
-        design_h = int(BAR_W * PHONE_ASPECT) + BAR_H + HEAD_H + URL_H + SLOT_H + 28
-        scale = min(1.0, max(640, sh - 96) / design_h, max(520, sw - 32) / BAR_W)
-
-        def px(n, floor=1):
-            return max(floor, int(round(n * scale)))
-
-        self._ui_w = px(BAR_W)
-        self._ui_bar = px(BAR_H, 52)
-        self._ui_head = px(HEAD_H, 30)
-        self._ui_url = px(URL_H, 28)
-        self._ui_slot = px(SLOT_H, 168)
-        self._ui_btn_w = px(200, 100)
-        self._ui_btn_h = px(60, 34)
-        self._font_btn = max(13, px(22))
-        self._font_menu = max(12, px(18))
-        self._font_slot = max(10, px(13))
-        self._font_overlay = max(12, px(18))
+        self._ui_w = min(760, max(560, sw - 24))
+        self._ui_head = 32
+        self._ui_url = 28
+        self._ui_bar = 56
+        self._ui_btn_w = max(110, (self._ui_w - 40) // 4)
+        self._ui_btn_h = 40
+        self._font_btn = 16
+        self._font_menu = 14
+        self._font_slot = 12
+        self._font_overlay = 16
+        # Five lines, three rows. This stays on screen; the mirror takes what is left.
+        self._ui_slot = min(300, max(228, int((sh - 80) * 0.32)))
 
     def _build_ui(self):
         btn_font = ctk.CTkFont(family="Poppins Condensed", size=self._font_btn, weight="bold")
@@ -169,6 +167,7 @@ class CompactController(ctk.CTk):
         self.slot_bar.pack(fill="x", side="top", pady=(0, 4))
         self.slot_bar.pack_propagate(False)
         slot_font = ctk.CTkFont(family="Poppins Condensed", size=self._font_slot, weight="bold")
+        wrap = max(140, self._ui_w // 3 - 24)
         self.stream_btns = []
         for col in range(3):
             self.slot_bar.grid_columnconfigure(col, weight=1, uniform="stream")
@@ -176,11 +175,15 @@ class CompactController(ctk.CTk):
             self.slot_bar.grid_rowconfigure(row, weight=1, uniform="stream")
         for i in range(9):
             btn = ctk.CTkButton(
-                self.slot_bar, text=str(i + 1), height=max(48, self._ui_slot // 3 - 8), corner_radius=8,
-                fg_color=RED, hover_color="#d32b22",
+                self.slot_bar, text="checking", height=max(72, self._ui_slot // 3 - 10),
+                corner_radius=8, fg_color=RED, hover_color="#d32b22",
                 font=slot_font, command=lambda i=i: self._streamer_click(i),
             )
             btn.grid(row=i // 3, column=i % 3, sticky="nsew", padx=3, pady=3)
+            try:
+                btn.configure(wraplength=wrap)
+            except Exception:
+                pass
             btn.bind("<Button-3>", lambda _e, i=i: self._rename_streamer(i))
             self.stream_btns.append(btn)
 
@@ -252,8 +255,8 @@ class CompactController(ctk.CTk):
         self.apps_btn.pack(side="left", padx=4)
 
     def _window_height(self) -> int:
-        mirror_h = int(self._ui_w * PHONE_ASPECT)
-        return mirror_h + self._ui_bar + self._ui_head + self._ui_url + self._ui_slot + 28
+        sh = self.winfo_screenheight() or 1080
+        return max(640, sh - 72)
 
     def _format_geo(self, x: int, y: int) -> str:
         """Fixed size. Negative coordinates must not become '+-10' or Tk throws."""
@@ -384,6 +387,8 @@ class CompactController(ctk.CTk):
         def save(_e=None):
             self.guide_slots[index] = entry.get().strip()
             self._save_slots()
+            if self.board:
+                self.board.set_names(self.guide_slots)
             if self.chromium:
                 self.chromium.set_names(self.guide_slots)
             top.destroy()
@@ -589,6 +594,8 @@ class CompactController(ctk.CTk):
         from core.whatnot_live import fetch_live
         try:
             fresh = fetch_live([n for n in self.guide_slots if n])
+            live = [name for name, info in fresh.items() if info.get("online")]
+            log("whatnot live " + (", ".join(live) if live else "none"))
             status = dict(self._whatnot_status)
             for name, info in fresh.items():
                 if info.get("online"):
@@ -597,7 +604,9 @@ class CompactController(ctk.CTk):
                     continue
                 misses = self._whatnot_misses.get(name, 0) + 1
                 self._whatnot_misses[name] = misses
-                if misses >= 2 or not (status.get(name) or {}).get("online"):
+                # Whatnot often answers with an empty list for a seller who is live.
+                # Only drop a green button after three polls that all came back empty.
+                if misses >= 3 or not (status.get(name) or {}).get("online"):
                     status[name] = info
             self._whatnot_status = status
         except Exception as exc:
@@ -632,25 +641,20 @@ class CompactController(ctk.CTk):
         self._full_busy = False
 
     def _streamer_info(self, name: str) -> dict:
-        info = dict((self._whatnot_status or {}).get(name) or {})
-        if info.get("online") and info.get("url"):
-            return info
-        extra = (self.chromium.snapshot() if self.chromium else {}).get(name) or {}
-        return extra or info
+        board = getattr(self, "board", None)
+        if not board or not name:
+            return {}
+        return dict(board.snapshot().get(name) or {})
 
     def _paint_streamers(self):
         from core.whatnot_live import button_text
-        now = time.monotonic()
-        if not self._whatnot_busy and (self._whatnot_at == 0 or now - self._whatnot_at > 15):
-            self._whatnot_busy = True
-            self._whatnot_at = now
-            threading.Thread(target=self._whatnot_tick, daemon=True).start()
+        snap = self.board.snapshot() if getattr(self, "board", None) else {}
         for i, btn in enumerate(getattr(self, "stream_btns", [])):
             name = self.guide_slots[i] if i < len(self.guide_slots) else ""
-            info = self._streamer_info(name) if name else {}
+            info = dict(snap.get(name) or {}) if name else {}
             online = bool(name and info.get("online") and info.get("url"))
             btn.configure(
-                text=button_text(name, info) if name else str(i + 1),
+                text=button_text(name, info if name else None),
                 fg_color=GREEN if online else RED,
                 hover_color="#28b34a" if online else "#d32b22",
             )
@@ -659,6 +663,11 @@ class CompactController(ctk.CTk):
     def _close(self):
         self._year_on = {"2024": False, "2025": False}
         self._pause_hier = True
+        try:
+            if getattr(self, "board", None):
+                self.board.close()
+        except Exception:
+            pass
         try:
             if self.chromium:
                 self.chromium.close()
