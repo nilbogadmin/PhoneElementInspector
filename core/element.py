@@ -161,31 +161,38 @@ def flatten_elements(root: UIElement) -> List[UIElement]:
 
 
 def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int = 0, clickable_only: bool = False):
-    """Smallest clickable element whose own box contains the point.
+    """Smallest element whose own box contains the point.
 
-    Non-clickable nodes are ignored. The point has to sit inside the real
-    border. Nothing nearby is stretched or borrowed to fill the click.
+    Full-screen parents are ignored. A clickable node wins over a label
+    inside it. The point has to sit inside the border.
     """
     best = None
     best_area = None
+    best_click = None
+    best_click_area = None
     pad = max(0, int(slop))
+    limit = img_w * img_h * 0.35 if img_w > 0 and img_h > 0 else 10 ** 12
+    height_cap = img_h * 0.6 if img_h > 0 else 10 ** 12
 
     for el in elements:
         if getattr(el, "ignored", False):
             continue
-        if clickable_only and not getattr(el, "clickable", False):
-            continue
         l, t, r, b = el.bounds
         w = r - l
         h = b - t
-        if w < 2 or h < 2:
+        if w < 4 or h < 4:
             continue
         if ix < l - pad or ix > r + pad or iy < t - pad or iy > b + pad:
             continue
         area = w * h
-        if img_w > 0 and img_h > 0 and area > img_w * img_h * 0.92:
+        if area > limit or h > height_cap:
             continue
         if best is None or area < best_area:
             best = el
             best_area = area
-    return best
+        if getattr(el, "clickable", False) and (best_click is None or area < best_click_area):
+            best_click = el
+            best_click_area = area
+    if clickable_only:
+        return best_click
+    return best_click or best

@@ -468,35 +468,35 @@ class CompactController(ctk.CTk):
         taps, seen = clicks_for_device(
             self.tagger, rules, root, [], (), serial=serial, hold=None,
         )
-        if not taps:
+        pairs = list(zip(seen, taps))
+        if not pairs:
             return "idle"
-        pressed = False
-        for tag, (x, y) in zip(seen, taps):
-            if not any(self._year_on.values()):
-                return "idle"
-            try:
-                self._tap_serial(serial, x, y)
-            except Exception as exc:
-                self._why_set(serial, "tap was not sent")
-                log(f"{serial} tap failed {exc}")
-                return "miss"
-            pressed = True
+        tag, (x, y) = pairs[0]
+        if not any(self._year_on.values()):
+            return "idle"
+        try:
+            self._tap_serial(serial, x, y)
+        except Exception as exc:
+            self._why_set(serial, "tap was not sent")
+            log(f"{serial} tap failed {exc}")
+            return "miss"
+        if not getattr(self, "fast", False):
             time.sleep(0.2)
-            if not any(self._year_on.values()):
-                return "idle"
-            try:
-                xml2 = self._dump_serial(serial)
-            except Exception as exc:
-                self._why_set(serial, "could not check the tap")
-                log(f"{serial} recheck failed {exc}")
-                return "miss"
-            root2 = parse_hierarchy_xml(xml2)
-            _again, seen2 = clicks_for_device(
-                self.tagger, rules, root2, [], (), serial=serial, hold=None,
-            )
-            if tag in seen2:
-                return "miss"
-        return "hit" if pressed else "idle"
+        if not any(self._year_on.values()):
+            return "idle"
+        try:
+            xml2 = self._dump_serial(serial)
+        except Exception as exc:
+            self._why_set(serial, "could not check the tap")
+            log(f"{serial} recheck failed {exc}")
+            return "miss"
+        root2 = parse_hierarchy_xml(xml2)
+        _again, seen2 = clicks_for_device(
+            self.tagger, rules, root2, [], (), serial=serial, hold=None,
+        )
+        if tag in seen2:
+            return "miss"
+        return "hit"
 
     def _deliver_stream(self, serial: str, url: str) -> bool:
         try:
@@ -1231,9 +1231,7 @@ class CompactController(ctk.CTk):
             self._show_overlay(f"Added {name} · {n} controllers")
 
     def _reset_rules(self):
-        count = 0
-        for entry in (self.rules.apps or {}).values():
-            count += len((entry or {}).get("rules") or [])
+        count = self.rules.clear()
         self._year_on = {"2024": False, "2025": False}
         self._paint_run_btn()
         self._paint_years()
@@ -1243,10 +1241,6 @@ class CompactController(ctk.CTk):
             except Exception:
                 pass
             self._rules_job = None
-        self.rules.apps = {"demo": {"rules": [], "crop": None}}
-        self.rules.active_package = "demo"
-        self.rules.last_matched = {}
-        self.rules.save()
         self.tagger.tags = {}
         self.tagger.save()
         self._held = {}

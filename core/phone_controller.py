@@ -49,8 +49,7 @@ class PhoneController:
                 self._pass()
             except Exception as exc:
                 log(f"{self.serial} controller {exc}")
-                self._reconnect()
-                self.stop.wait(1.5)
+                self._pause(0.2)
 
     def _pass(self):
         app = self.app
@@ -114,7 +113,8 @@ class PhoneController:
         self.rounds += 1
         if self.rounds <= 3:
             log(f"{self.serial} open stream again {self.rounds}/3")
-            self.stop.wait(0.4)
+            self._pause(0.4)
+            self._whatnot_home()
             if url:
                 try:
                     self.app._open_on_phone(self.serial, url)
@@ -124,6 +124,11 @@ class PhoneController:
         log(f"{self.serial} reload app")
         self.rounds = 0
         self._reload_app(url)
+
+    def _pause(self, seconds: float):
+        if getattr(self.app, "fast", False):
+            return
+        self.stop.wait(seconds)
 
     def _whatnot_home(self):
         try:
@@ -141,7 +146,7 @@ class PhoneController:
             self.app._adb_call(self.serial, ["shell", "am", "force-stop", "com.whatnot_mobile"], timeout=6)
         except Exception as exc:
             log(f"{self.serial} force-stop failed {exc}")
-        self.stop.wait(1.0)
+        self._pause(1.0)
         if not url:
             return
         try:
@@ -172,8 +177,5 @@ class PhoneController:
             log(f"{self.serial} fullscreen again {exc}")
 
     def _reconnect(self):
-        try:
-            self.app._adb_host(["-s", self.serial, "reconnect"], timeout=8)
-            log(f"{self.serial} reconnect")
-        except Exception as exc:
-            log(f"{self.serial} reconnect failed {exc}")
+        """Kept so old callers do not crash. The farm must never bounce ADB."""
+        log(f"{self.serial} reconnect skipped")

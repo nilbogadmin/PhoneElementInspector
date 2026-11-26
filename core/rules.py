@@ -76,6 +76,17 @@ class RulesEngine:
         entry["crop"] = list(crop) if crop else None
         self.save()
 
+    def clear(self) -> int:
+        """Delete every rule under every package. Returns how many were removed."""
+        count = 0
+        for entry in (self.apps or {}).values():
+            count += len((entry or {}).get("rules") or [])
+        self.apps = {"demo": {"rules": [], "crop": None}}
+        self.active_package = "demo"
+        self.last_matched = {}
+        self.save()
+        return count
+
     def add_rule(self, rule: dict):
         self.rules.append(rule)
         self.save()
@@ -146,7 +157,7 @@ class RulesEngine:
                 continue
             if edge_only and was:
                 continue  # still visible – already fired
-            self.last_results.append(f"\u2714 {rule.get('name', 'Unnamed')}")
+            self.last_results.append(f"✔ {rule.get('name', 'Unnamed')}")
             self.last_results.extend(self.run_actions(rule.get("actions", []), root))
         # drop stale indices if rules were deleted
         self.last_matched = {i: self.last_matched[i] for i in self.last_matched if i < len(self.rules)}
@@ -156,7 +167,7 @@ class RulesEngine:
         tag = action.get("tag")
         el = self.tagger.find_by_tag(root, tag) if tag else None
         if not el:
-            return f"CLICK [{tag}] \u2013 not found"
+            return f"CLICK [{tag}] – not found"
         x, y = el.center
         if self._click_callback:
             self._click_callback(x, y)
