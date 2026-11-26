@@ -11,6 +11,7 @@ from queue import Empty, Queue
 
 from core.log import log
 from core.paths import app_dir
+from core.show_page import read_show
 from core.stream_link import read_streams
 
 
@@ -24,8 +25,25 @@ class ChromiumGuide:
         self._status = {}
         self._names = []
         self._page_url = ""
+        self._wanted: dict[str, str] = {}
+        self._commerce: dict[str, dict] = {}
+        self._show_pages: dict = {}
+        self._page_frames: dict = {}
         self.thread = threading.Thread(target=self._run, name="chromium", daemon=True)
         self.thread.start()
+
+    def sync_live(self, shows: dict) -> None:
+        """Open one tab per live show and close the tab when that show ends."""
+        clean = {}
+        for name, url in (shows or {}).items():
+            if name and url:
+                clean[str(name)] = str(url)
+        with self._lock:
+            self._wanted = clean
+
+    def commerce(self) -> dict:
+        with self._lock:
+            return {key: dict(value) for key, value in self._commerce.items()}
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -90,6 +108,7 @@ class ChromiumGuide:
                         self._go(page, cmd[1])
                     self._place(context, page)
                     self._poll(page)
+                    self._sync_tabs(context)
                 try:
                     context.close()
                 except Exception:
@@ -98,12 +117,67 @@ class ChromiumGuide:
             log(f"chromium stopped {exc}")
 
     def _hook(self, page) -> None:
+        if id(page) in self._page_frames:
+            return
+        bucket = deque(maxlen=30)
+        self._page_frames[id(page)] = bucket
+
         def on_ws(ws):
-            ws.on("framereceived", lambda payload: self._push_ws(_frame_text(payload)))
-            ws.on("framesent", lambda payload: self._push_ws(_frame_text(payload)))
+            def keep(payload):
+                text = _frame_text(payload)[:8000]
+                bucket.append(text)
+                self._push_ws(text)
+
+            ws.on("framereceived", keep)
 
         try:
             page.on("websocket", on_ws)
+        except Exception:
+            pass
+
+    def _sync_tabs(self, context) -> None:
+        with self._lock:
+            wanted = dict(self._wanted)
+        for name, page in list(self._show_pages.items()):
+            if name not in wanted:
+                self._close_tab(name, page)
+        for name, url in wanted.items():
+            page = self._show_pages.get(name)
+            if page is None or _closed(page):
+                try:
+                    page = context.new_page()
+                except Exception as exc:
+                    log(f"show tab failed {name} {exc}")
+                    continue
+                self._hook(page)
+                self._show_pages[name] = page
+            if not _on_show(page, url):
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    log(f"show tab {name}")
+                except Exception as exc:
+                    log(f"show tab open failed {name} {exc}")
+        commerce = {}
+        for name, page in list(self._show_pages.items()):
+            if _closed(page):
+                self._show_pages.pop(name, None)
+                continue
+            dom = {}
+            try:
+                dom = page.evaluate(_SHOW_JS) or {}
+            except Exception:
+                dom = {}
+            frames = list(self._page_frames.get(id(page)) or [])
+            commerce[name] = read_show(dom, frames)
+        with self._lock:
+            self._commerce = commerce
+
+    def _close_tab(self, name: str, page) -> None:
+        self._show_pages.pop(name, None)
+        self._page_frames.pop(id(page), None)
+        try:
+            page.close()
+            log(f"show tab closed {name}")
         except Exception:
             pass
 
@@ -188,6 +262,23 @@ class ChromiumGuide:
         log("chromium downloaded")
 
 
+def _closed(page) -> bool:
+    try:
+        return bool(page.is_closed())
+    except Exception:
+        return True
+
+
+def _on_show(page, url: str) -> bool:
+    show_id = (url or "").rstrip("/").rsplit("/", 1)[-1]
+    if not show_id:
+        return False
+    try:
+        return show_id in (page.url or "")
+    except Exception:
+        return False
+
+
 def _frame_text(payload) -> str:
     if isinstance(payload, str):
         return payload
@@ -221,6 +312,37 @@ def _place_win32(x: int, y: int, w: int, h: int) -> bool:
         return True
     except Exception:
         return False
+
+
+_SHOW_JS = """
+() => {
+  const clean = (value) => (value || "").replace(/\\s+/g, " ").trim();
+  const itemNode = document.querySelector("[data-testid='show-product-title']");
+  let giveaway = "";
+  const nodes = document.querySelectorAll("[data-testid*='giveaway'], [data-testid*='Giveaway']");
+  for (const node of nodes) {
+    const title = node.querySelector("strong[title], [data-testid*='title']");
+    const titleText = clean(title && title.innerText);
+    if (titleText && !/giveaway/i.test(titleText)) {
+      giveaway = titleText;
+      break;
+    }
+  }
+  if (!giveaway) {
+    for (const heading of document.querySelectorAll("header strong, h2, h3")) {
+      const label = clean(heading.innerText);
+      if (!/^giveaway\\b/i.test(label) || /upcoming/i.test(label)) continue;
+      const section = heading.closest("section");
+      const title = section && section.querySelector("strong[title]");
+      if (title && clean(title.innerText)) {
+        giveaway = clean(title.innerText);
+        break;
+      }
+    }
+  }
+  return {item: clean(itemNode && itemNode.innerText), giveaway};
+}
+"""
 
 
 _PAGE_JS = """
