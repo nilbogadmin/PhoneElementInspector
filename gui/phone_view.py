@@ -159,30 +159,11 @@ class PhoneView(ctk.CTkFrame):
             self.canvas.tag_raise(self._sel_id)
 
     def _rebuild_tag_boxes(self):
+        """Rules stay invisible. Only the element the user just clicked is drawn."""
         for item in self._tag_ids:
             self.canvas.delete(item)
         self._tag_ids = []
         self._tag_bounds = []
-        if not self.show_only_tagged and not self.show_all_outlines:
-            self._draw_locked_outline()
-            return
-        for el in self.elements:
-            tagged = bool(el.tag)
-            if self.show_only_tagged and not tagged:
-                continue
-            if not self.show_all_outlines and not tagged:
-                continue
-            if not tagged and not self.show_all_outlines:
-                continue
-            l, t, r, b = el.bounds
-            if r <= l or b <= t:
-                continue
-            color = "#30d158" if tagged else "#ffaf46"
-            self._tag_bounds.append((l, t, r, b))
-            self._tag_ids.append(self.canvas.create_rectangle(
-                0, 0, 0, 0, outline=color, width=3
-            ))
-        self._place_tag_boxes()
         self._draw_locked_outline()
 
     def _place_tag_boxes(self):

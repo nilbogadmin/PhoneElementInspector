@@ -211,7 +211,7 @@ class CompactController(ctk.CTk):
             on_crop_changed=None,
         )
         self.phone_view.pack(fill="both", expand=True, padx=6, pady=6)
-        self.phone_view.set_outline_mode(show_all=False, only_tagged=True)
+        self.phone_view.set_outline_mode(show_all=False, only_tagged=False)
 
         self.overlay = ctk.CTkLabel(
             self.mirror_frame, text="", text_color=LABEL,
@@ -1329,7 +1329,27 @@ class CompactController(ctk.CTk):
             serial=self.device.serial,
         )
         self.phone_view.set_elements(visible)
+        self._drop_huge_selection()
         self._keep_clicks_on_mirror()
+
+    def _drop_huge_selection(self):
+        """A page-sized box is never a selection, even if a rule points at it."""
+        bounds = None
+        if self.current_element is not None:
+            bounds = self.current_element.bounds
+        elif getattr(self.phone_view, "locked_bounds", None):
+            bounds = self.phone_view.locked_bounds
+        shot = getattr(self.device, "last_screenshot", None)
+        if not bounds or shot is None:
+            return
+        iw, ih = shot.size
+        if iw < 20 or ih < 20:
+            return
+        l, t, r, b = bounds
+        w, h = r - l, b - t
+        if w * h > iw * ih * 0.18 or h > ih * 0.42 or w > iw * 0.9:
+            self.current_element = None
+            self.phone_view.clear_selection()
 
     def _on_element_selected(self, el: UIElement):
         if el is None:
