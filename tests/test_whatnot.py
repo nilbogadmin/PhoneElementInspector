@@ -1,6 +1,6 @@
 import unittest
 
-from core.whatnot_live import button_text, parse_live, parse_stream
+from core.whatnot_live import button_text, parse_live, parse_stream, shop_giveaway
 
 
 def _payload():
@@ -39,7 +39,17 @@ class WhatnotTests(unittest.TestCase):
         info = parse_live({"data": {"getUser": None}})
         self.assertFalse(info["known"])
 
-    def test_button_always_has_five_lines(self):
+    def test_first_giveaway_in_the_shop_is_the_one_on_screen(self):
+        payload = {"data": {"liveShop": {"feed": {"objects": {"edges": [
+            {"node": {"sectionType": "SHOP_PRODUCTS", "contents": {"edges": [
+                {"node": {"title": "Pack", "transactionType": "AUCTION"}},
+            ]}}},
+            {"node": {"sectionType": "SHOP_GIVEAWAYS", "contents": {"edges": [
+                {"node": {"title": "$20 Whatnot Gift Card", "transactionType": "GIVEAWAY"}},
+                {"node": {"title": "$25 Whatnot Gift Card", "transactionType": "GIVEAWAY"}},
+            ]}}},
+        ]}}}}}
+        self.assertEqual(shop_giveaway(payload), "$20 Whatnot Gift Card")
         live = button_text("krakenhits", parse_live(_payload())).splitlines()
         self.assertEqual(live, [
             "KRAKENHITS",

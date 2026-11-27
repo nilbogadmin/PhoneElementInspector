@@ -32,6 +32,21 @@ _BY_ID = """query LiveStream($id: ID!) {
   liveStream(id: $id) { id status title activeViewers }
 }"""
 
+_SHOP = """query LiveShopFeed($liveId: ID!, $first: Int) {
+  liveShop(liveId: $liveId) {
+    feed {
+      objects(first: $first) {
+        edges { node {
+          ... on Section {
+            sectionType
+            contents { edges { node { ... on ListingNode { title transactionType } } } }
+          }
+        } }
+      }
+    }
+  }
+}"""
+
 # The saved button name has a typo. The live account is traderbeaplus.
 _ALIAS = {"traderbeapllus": "traderbeaplus"}
 
@@ -150,6 +165,36 @@ def _post_query(query: str, variables: dict, operation: str = "GetLivestreams") 
         return None
 
 
+def shop_giveaway(payload: dict) -> str:
+    """The first giveaway in the live shop is the one on screen."""
+    edges = (
+        (((payload or {}).get("data") or {}).get("liveShop") or {})
+        .get("feed", {})
+        .get("objects", {})
+        .get("edges")
+        or []
+    )
+    for edge in edges:
+        node = (edge or {}).get("node") or {}
+        if str(node.get("sectionType") or "") != "SHOP_GIVEAWAYS":
+            continue
+        for item in ((node.get("contents") or {}).get("edges") or []):
+            listing = (item or {}).get("node") or {}
+            if str(listing.get("transactionType") or "").upper() != "GIVEAWAY":
+                continue
+            title = _title(listing)
+            if title:
+                return title
+    return ""
+
+
+def _shop_giveaway(show_id: str) -> str:
+    payload = _post_query(_SHOP, {"liveId": show_id, "first": 40}, operation="LiveShopFeed")
+    if payload is None:
+        return ""
+    return shop_giveaway(payload)
+
+
 def _by_id(show_id: str) -> dict | None:
     payload = _post_query(_BY_ID, {"id": show_id}, operation="LiveStream")
     if payload is None:
@@ -241,11 +286,17 @@ class ShowBoard:
             info = _by_id(show_id)
             if info is None:
                 return
+            if info.get("online"):
+                gift = _shop_giveaway(show_id)
+                with self._lock:
+                    previous = (self._info.get(name) or {}).get("giveaway") or ""
+                info["giveaway"] = gift or previous
             self._store(name, info, show_id if info.get("online") else None)
             return
         info = _read(name, tries=1 if had_offline else 4)
         if info and info.get("online"):
             show_id = info["url"].rsplit("/", 1)[-1]
+            info["giveaway"] = _shop_giveaway(show_id)
             with self._lock:
                 self._misses[name] = 0
             self._store(name, info, show_id)

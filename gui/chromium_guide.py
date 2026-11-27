@@ -318,29 +318,21 @@ _SHOW_JS = """
 () => {
   const clean = (value) => (value || "").replace(/\\s+/g, " ").trim();
   const itemNode = document.querySelector("[data-testid='show-product-title']");
+  const panel = document.querySelector("[data-testid='live-shop-panel']");
+  const lines = (panel ? panel.innerText : "").split(/\\n/).map((line) => line.trim()).filter(Boolean);
   let giveaway = "";
-  const nodes = document.querySelectorAll("[data-testid*='giveaway'], [data-testid*='Giveaway']");
-  for (const node of nodes) {
-    const title = node.querySelector("strong[title], [data-testid*='title']");
-    const titleText = clean(title && title.innerText);
-    if (titleText && !/giveaway/i.test(titleText)) {
-      giveaway = titleText;
+  for (let i = 0; i < lines.length; i++) {
+    if (!/giveaways?\\b/i.test(lines[i])) continue;
+    for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) {
+      const line = lines[j];
+      if (/^qty\\b/i.test(line) || /^\\d+$/.test(line)) continue;
+      if (/^(products|chat|watching|surprise)/i.test(line)) break;
+      giveaway = line;
       break;
     }
+    if (giveaway) break;
   }
-  if (!giveaway) {
-    for (const heading of document.querySelectorAll("header strong, h2, h3")) {
-      const label = clean(heading.innerText);
-      if (!/^giveaway\\b/i.test(label) || /upcoming/i.test(label)) continue;
-      const section = heading.closest("section");
-      const title = section && section.querySelector("strong[title]");
-      if (title && clean(title.innerText)) {
-        giveaway = clean(title.innerText);
-        break;
-      }
-    }
-  }
-  return {item: clean(itemNode && itemNode.innerText), giveaway};
+  return {item: clean(itemNode && itemNode.innerText), giveaway: clean(giveaway)};
 }
 """
 
