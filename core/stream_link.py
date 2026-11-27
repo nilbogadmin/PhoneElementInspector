@@ -35,17 +35,25 @@ def _token(name: str, text: str) -> bool:
 def stream_reached(text: str, url: str) -> bool:
     """True when Whatnot is open on this live link.
 
-    A different live id still on screen is not a success.
+    A different live id still on screen is not a success. If the dump shows
+    Whatnot and no other live id, the open counted. These phones often leave
+    the id out of the activity dump.
     """
+    import re
     live = (url or "").rstrip("/").rsplit("/", 1)[-1]
     blob = text or ""
-    if "com.whatnot_mobile" not in blob or not live:
+    if "com.whatnot_mobile" not in blob:
         return False
-    if live in blob:
+    if live and live in blob:
         return True
-    if "/live/" in blob:
+    ids = re.findall(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        blob,
+        re.I,
+    )
+    if live and ids and live.lower() not in {item.lower() for item in ids}:
         return False
-    return "ACTIVITY com.whatnot_mobile" in blob or "mResumedActivity" in blob
+    return "mResumedActivity" in blob or "ACTIVITY" in blob
 
 
 

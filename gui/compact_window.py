@@ -424,6 +424,7 @@ class CompactController(ctk.CTk):
             return
         self._year_url[year] = url
         self._year_token[year] = self._year_token.get(year, 0) + 1
+        self._remember_years()
         self._sync_controllers()
         self.after(0, lambda: self._show_overlay(f"{year} sending"))
         log(f"sent {name} to {year} controllers")
@@ -446,6 +447,27 @@ class CompactController(ctk.CTk):
         except Exception:
             pass
 
+    def _remember_years(self):
+        """Stamp 2024 or 2025 on every phone before a stream send or a tap."""
+        from core.match import model_year
+        changed = False
+        try:
+            from core.panda import phones
+            for phone in phones():
+                serial = phone.get("serial") or ""
+                year = model_year(phone.get("model") or "") or self._years.get(serial) or ""
+                if serial and year in ("2024", "2025") and self._years.get(serial) != year:
+                    self._years[serial] = year
+                    changed = True
+        except Exception:
+            pass
+        if changed:
+            self._save_years()
+        for serial, ctl in list(self._controllers.items()):
+            year = self._years.get(serial) or ""
+            if year in ("2024", "2025"):
+                ctl.year = year
+
     def _sync_controllers(self):
         from core.phone_controller import PhoneController
         try:
@@ -453,6 +475,7 @@ class CompactController(ctk.CTk):
         except Exception as exc:
             log(f"controller list failed {exc}")
             return
+        self._remember_years()
         with self._ctrl_lock:
             for serial, state in rows:
                 if state == "unauthorized":
@@ -509,7 +532,11 @@ class CompactController(ctk.CTk):
         from core.match import clicks_for_device
         if not any(self._year_on.values()):
             return "idle"
-        if serial and serial == (getattr(self.device, "serial", "") or ""):
+        if (
+            serial
+            and serial == (getattr(self.device, "serial", "") or "")
+            and time.monotonic() < getattr(self, "_train_until", 0)
+        ):
             return "idle"
         rules = self._all_rules()
         if not rules:
@@ -522,6 +549,9 @@ class CompactController(ctk.CTk):
         except Exception as exc:
             self._why_set(serial, "could not see the screen")
             reason = " ".join(str(exc).split())[:36] or "failed"
+            if self._tap_saved(serial):
+                self._note_click(f"tap {short} saved", tapped=True)
+                return "hit"
             self._note_click(f"look failed {short} {reason}")
             log(f"{serial} look failed {exc}")
             return "idle"
@@ -566,6 +596,24 @@ class CompactController(ctk.CTk):
         if tag in seen2:
             return "miss"
         return "hit"
+
+    def _tap_saved(self, serial: str) -> bool:
+        """The screen could not be read. Tap the point that was saved with the rule."""
+        for rule in self._all_rules():
+            for cond in rule.get("conditions") or []:
+                tag = cond.get("tag") or ""
+                exact = (self.tagger.tags.get(tag) or {}).get("exact") or {}
+                bounds = exact.get("bounds") or []
+                if len(bounds) != 4:
+                    continue
+                x = int((bounds[0] + bounds[2]) / 2)
+                y = int((bounds[1] + bounds[3]) / 2)
+                try:
+                    self._tap_serial(serial, x, y)
+                except Exception:
+                    return False
+                return True
+        return False
 
     def _deliver_stream(self, serial: str, url: str) -> bool:
         try:
@@ -773,9 +821,16 @@ class CompactController(ctk.CTk):
 
     def _apply_devices(self, pairs):
         mapping = {}
+        changed = False
         for serial, year in pairs:
-            if year in ("2024", "2025") and year not in mapping:
-                mapping[year] = serial
+            if year in ("2024", "2025"):
+                if self._years.get(serial) != year:
+                    self._years[serial] = year
+                    changed = True
+                if year not in mapping:
+                    mapping[year] = serial
+        if changed:
+            self._save_years()
         self._serial_by_year = mapping
         self._paint_years()
         serial = mapping.get(self._active_year)
@@ -1231,6 +1286,7 @@ class CompactController(ctk.CTk):
 
     def _on_element_selected(self, el: UIElement):
         self.current_element = el
+        self._train_until = time.monotonic() + 12
         raw = getattr(el, "_raw_bounds", None) or el.bounds
         kind = (el.class_name or "Element").split(".")[-1]
         ident = (el.resource_id.split("/")[-1] if el.resource_id else "") or el.text or el.content_desc or "no id"

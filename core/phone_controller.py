@@ -55,11 +55,20 @@ class PhoneController:
         app = self.app
         serial = self.serial
         year = self.year or (app._years.get(serial) if hasattr(app, "_years") else "") or ""
+        if year not in ("2024", "2025"):
+            try:
+                year = app._phone_year(serial) or ""
+            except Exception:
+                year = ""
+        if year in ("2024", "2025"):
+            self.year = year
         with self.lock:
             close_n = self.want_close
         if close_n != self.did_close:
             self._close_apps()
             self.did_close = close_n
+        if self.year in ("2024", "2025"):
+            self._follow_stream()
         if any(app._year_on.values()):
             result = app._click_look(serial)
             if result == "miss":
@@ -68,36 +77,40 @@ class PhoneController:
             elif result == "hit":
                 app._why_set(serial, "tap landed")
                 self._note_ok()
-        if year not in ("2024", "2025"):
-            app._why_set(serial, "reading model")
-            return
-        self.year = year
+        if self.year in ("2024", "2025"):
+            now = time.monotonic()
+            if now - self.full_at > 300:
+                self.full_at = now
+                self._fullscreen()
+
+    def _follow_stream(self):
+        app = self.app
+        serial = self.serial
+        year = self.year
         token = app._year_token.get(year, 0)
         url = app._year_url.get(year) or ""
-        if url and token != self.stream_token:
-            if app._stream_is_open(serial, url):
-                self.stream_token = token
-                self._note_ok()
-                app._why_set(serial, "on stream")
-                app._mark_stream(serial, year, True)
-                log(f"{serial} stream ok")
-            elif app._deliver_stream(serial, url):
-                self.stream_token = token
-                app._phone_url = getattr(app, "_phone_url", {})
-                app._phone_url[serial] = url
-                self._note_ok()
-                app._why_set(serial, "on stream")
-                app._mark_stream(serial, year, True)
-                log(f"{serial} stream ok")
-            else:
-                app._mark_stream(serial, year, False)
-                app._why_set(serial, f"stream not open try {self.fails + 1}/5")
-                log(f"{serial} stream again")
-                self._note_fail(url)
-        now = time.monotonic()
-        if now - self.full_at > 300:
-            self.full_at = now
-            self._fullscreen()
+        if not url or token == self.stream_token:
+            return
+        if app._stream_is_open(serial, url):
+            self.stream_token = token
+            self._note_ok()
+            app._why_set(serial, "on stream")
+            app._mark_stream(serial, year, True)
+            log(f"{serial} stream ok")
+            return
+        if app._deliver_stream(serial, url):
+            self.stream_token = token
+            app._phone_url = getattr(app, "_phone_url", {})
+            app._phone_url[serial] = url
+            self._note_ok()
+            app._why_set(serial, "on stream")
+            app._mark_stream(serial, year, True)
+            log(f"{serial} stream ok")
+            return
+        app._mark_stream(serial, year, False)
+        app._why_set(serial, f"stream not open try {self.fails + 1}/5")
+        log(f"{serial} stream again")
+        self._note_fail(url)
 
     def _note_ok(self):
         self.fails = 0
