@@ -50,21 +50,23 @@ class WhatnotTests(unittest.TestCase):
             ]}}},
         ]}}}}}
         self.assertEqual(shop_giveaway(payload), "$20 Whatnot Gift Card")
-        live = button_text("krakenhits", parse_live(_payload())).splitlines()
-        self.assertEqual(live, [
+        shown = dict(parse_live(_payload()))
+        shown["giveaway"] = "$20 Whatnot Gift Card"
+        self.assertEqual(button_text("krakenhits", shown).splitlines(), [
             "KRAKENHITS",
             "CRAZY ETB WALL",
             "1,013 watching",
-            "Now: —",
-            "Gift: —",
+            "$20 Whatnot Gift Card",
         ])
+        self.assertNotIn("Now:", button_text("krakenhits", {"online": True, "title": "Show", "viewers": 1, "item": "Pack", "giveaway": "Sold"}))
+        self.assertEqual(button_text("krakenhits", {"online": True, "title": "Show", "viewers": 1, "giveaway": "Sold"}).splitlines()[-1], "—")
         offline = button_text("krakenhits", parse_live(
             {"data": {"getUser": {"livestreams": {"edges": []}}}}
         )).splitlines()
         self.assertEqual(offline[0], "KRAKENHITS")
         self.assertEqual(offline[1], "offline")
-        self.assertEqual(len(offline), 5)
-        self.assertEqual(len(button_text("krakenhits", {}).splitlines()), 5)
+        self.assertEqual(len(offline), 4)
+        self.assertEqual(len(button_text("krakenhits", {}).splitlines()), 4)
 
 
 if __name__ == "__main__":

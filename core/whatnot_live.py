@@ -107,36 +107,19 @@ def parse_stream(payload: dict) -> dict | None:
 
 
 def button_text(name: str, info: dict) -> str:
-    """Always five lines, so a button never collapses to just a name."""
+    """Seller, show, viewers, and the giveaway. No item-for-sale line."""
     label = (name or "").upper() or "—"
     if not info:
-        state, viewers = "checking", "—"
-        title = ""
+        show, viewers = "checking", "—"
     elif not info.get("online"):
-        state, viewers = "offline", "—"
-        title = ""
+        show, viewers = "offline", "—"
     else:
-        state = (info.get("title") or "live")[:42]
+        show = (info.get("title") or "live")[:42]
         viewers = f"{info['viewers']:,} watching" if isinstance(info.get("viewers"), int) else "LIVE"
-        title = state
-        state = title
-    lines = [
-        label,
-        state,
-        viewers if info and info.get("online") else ("—" if info else "—"),
-        "Now: " + ((info or {}).get("item") or "—"),
-        "Gift: " + ((info or {}).get("giveaway") or "—"),
-    ]
-    if info and info.get("online"):
-        lines[1] = (info.get("title") or "live")[:42]
-        lines[2] = f"{info['viewers']:,} watching" if isinstance(info.get("viewers"), int) else "LIVE"
-    elif not info:
-        lines[1] = "checking"
-        lines[2] = "—"
-    else:
-        lines[1] = "offline"
-        lines[2] = "—"
-    return "\n".join(lines)
+    gift = _title({"title": (info or {}).get("giveaway")}) if info else ""
+    if gift.lower() in {"sold", "buy now", "entered", "enter giveaway"}:
+        gift = ""
+    return "\n".join([label, show, viewers, gift or "—"])
 
 
 def _post_query(query: str, variables: dict, operation: str = "GetLivestreams") -> dict | None:

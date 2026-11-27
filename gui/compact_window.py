@@ -649,16 +649,10 @@ class CompactController(ctk.CTk):
     def _paint_streamers(self):
         from core.whatnot_live import button_text
         snap = self.board.snapshot() if getattr(self, "board", None) else {}
-        shop = self.chromium.commerce() if getattr(self, "chromium", None) else {}
         live = {}
         for i, btn in enumerate(getattr(self, "stream_btns", [])):
             name = self.guide_slots[i] if i < len(self.guide_slots) else ""
             info = dict(snap.get(name) or {}) if name else {}
-            extra = shop.get(name) or {}
-            if extra.get("item"):
-                info["item"] = extra["item"]
-            if extra.get("giveaway"):
-                info["giveaway"] = extra["giveaway"]
             if name and info.get("online") and info.get("url"):
                 live[name] = info["url"]
             online = bool(name and info.get("online") and info.get("url"))
