@@ -286,6 +286,15 @@ class PhoneView(ctk.CTkFrame):
                 chosen = hit_el
                 chosen_area = area
         if chosen is None:
+            if self.selected is not None:
+                self.clear_selection()
+                if self.on_element_selected:
+                    self.on_element_selected(None)
+            return
+        if self.selected is not None and tuple(self.selected.bounds) == tuple(chosen.bounds):
+            self.clear_selection()
+            if self.on_element_selected:
+                self.on_element_selected(None)
             return
         self.selected = chosen
         self.locked_bounds = tuple(chosen.bounds)

@@ -171,8 +171,9 @@ def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int =
     best_click = None
     best_click_area = None
     pad = max(0, int(slop))
-    limit = img_w * img_h * 0.35 if img_w > 0 and img_h > 0 else 10 ** 12
-    height_cap = img_h * 0.6 if img_h > 0 else 10 ** 12
+    limit = img_w * img_h * 0.18 if img_w > 0 and img_h > 0 else 10 ** 12
+    height_cap = img_h * 0.42 if img_h > 0 else 10 ** 12
+    width_cap = img_w * 0.9 if img_w > 0 else 10 ** 12
 
     for el in elements:
         if getattr(el, "ignored", False):
@@ -185,7 +186,7 @@ def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int =
         if ix < l - pad or ix > r + pad or iy < t - pad or iy > b + pad:
             continue
         area = w * h
-        if area > limit or h > height_cap:
+        if area > limit or h > height_cap or w > width_cap:
             continue
         if best is None or area < best_area:
             best = el
@@ -195,4 +196,6 @@ def pick_element(elements, ix: int, iy: int, img_w: int, img_h: int, slop: int =
             best_click_area = area
     if clickable_only:
         return best_click
+    if best_click is not None and best is not None and best_click_area > best_area * 4:
+        return best
     return best_click or best

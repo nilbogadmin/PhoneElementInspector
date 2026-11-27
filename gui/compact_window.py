@@ -412,6 +412,11 @@ class CompactController(ctk.CTk):
             self._show_overlay("Offline")
             return
         url = info["url"]
+        now = time.monotonic()
+        if now - getattr(self, "_stream_click_at", 0) < 0.6 and getattr(self, "_stream_click_i", -1) == index:
+            return
+        self._stream_click_at = now
+        self._stream_click_i = index
         log(f"send {name} {url} {self._active_year}")
         year = self._active_year
         threading.Thread(target=self._send_stream, args=(url, name, year), daemon=True).start()
@@ -423,11 +428,53 @@ class CompactController(ctk.CTk):
             self.after(0, lambda: self._show_overlay("Bad link"))
             return
         self._year_url[year] = url
-        self._year_token[year] = self._year_token.get(year, 0) + 1
+        token = self._year_token.get(year, 0) + 1
+        self._year_token[year] = token
         self._remember_years()
         self._sync_controllers()
-        self.after(0, lambda: self._show_overlay(f"{year} sending"))
-        log(f"sent {name} to {year} controllers")
+        for serial, ctl in list(self._controllers.items()):
+            if ctl.year in ("2024", "2025"):
+                continue
+            try:
+                ctl.year = self._phone_year(serial) or ""
+            except Exception:
+                ctl.year = ""
+        serials = [serial for serial, ctl in self._controllers.items() if ctl.year == year]
+        self.after(0, lambda n=len(serials): self._show_overlay(f"{year} sending {n}"))
+        log(f"sent {name} to {len(serials)} {year}")
+        if not serials:
+            return
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        ok = 0
+
+        def one(serial):
+            try:
+                self._open_on_phone(serial, url)
+            except Exception as exc:
+                from core.panda import shell
+                cmd = (
+                    "am start -a android.intent.action.VIEW "
+                    "-c android.intent.category.BROWSABLE "
+                    f"-d {url} -p com.whatnot_mobile -f 0x10008000"
+                )
+                if not shell(serial, cmd, timeout=8):
+                    log(f"{serial} stream failed {exc}")
+                    return False
+            ctl = self._controllers.get(serial)
+            if ctl is not None and self._year_token.get(year) == token:
+                ctl.stream_token = token
+            log(f"{serial} stream sent")
+            return True
+
+        pool = ThreadPoolExecutor(max_workers=8)
+        futs = [pool.submit(one, serial) for serial in serials]
+        for fut in as_completed(futs):
+            try:
+                ok += 1 if fut.result() else 0
+            except Exception:
+                pass
+        pool.shutdown(wait=False)
+        self.after(0, lambda n=ok, total=len(serials): self._show_overlay(f"{year} sent {n}/{total}"))
 
     def _mark_stream(self, serial: str, year: str, ok: bool):
         self._stream_ok[serial] = bool(ok)
@@ -1198,7 +1245,7 @@ class CompactController(ctk.CTk):
                 self.destroy()
                 return "break"
             for i, btn in enumerate(self.stream_btns):
-                if self._inside(btn, x_root, y_root) and not self._owned_by(event.widget, btn):
+                if self._inside(btn, x_root, y_root):
                     self._streamer_click(i)
                     return "break"
 
@@ -1285,6 +1332,10 @@ class CompactController(ctk.CTk):
         self._keep_clicks_on_mirror()
 
     def _on_element_selected(self, el: UIElement):
+        if el is None:
+            self.current_element = None
+            self._show_overlay("Cleared")
+            return
         self.current_element = el
         self._train_until = time.monotonic() + 12
         raw = getattr(el, "_raw_bounds", None) or el.bounds
