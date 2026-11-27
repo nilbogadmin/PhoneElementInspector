@@ -100,6 +100,7 @@ class CompactController(ctk.CTk):
         self._adb_bad = set()
         self._adb_refresh_busy = False
         self._controllers = {}
+        self._taps_sent = 0
         self._ctrl_lock = threading.Lock()
         self._year_url = {"2024": "", "2025": ""}
         self._year_token = {"2024": 0, "2025": 0}
@@ -478,6 +479,29 @@ class CompactController(ctk.CTk):
                 except Exception:
                     pass
 
+    def _note_click(self, text: str, tapped: bool = False):
+        """Say it on the window. A tap that only hits the log file looks like nothing happened."""
+        log("click " + text)
+        if tapped:
+            self._taps_sent = getattr(self, "_taps_sent", 0) + 1
+        now = time.monotonic()
+        show = tapped or now - getattr(self, "_click_note_at", 0) > 0.8
+        if show:
+            self._click_note_at = now
+
+        def paint(show=show, text=text):
+            n = len(getattr(self, "_controllers", {}) or {})
+            taps = getattr(self, "_taps_sent", 0)
+            word = "clicking" if any(self._year_on.values()) else "idle"
+            self.drag_zone.configure(text=f"{n} {word} · {taps} taps")
+            if show:
+                self._show_overlay(text[:48])
+
+        try:
+            self.after(0, paint)
+        except Exception:
+            pass
+
     def _click_look(self, serial: str) -> str:
         """This phone only. Look, tap one element, look again before the next press."""
         from core.hierarchy import parse_hierarchy_xml
@@ -486,19 +510,29 @@ class CompactController(ctk.CTk):
             return "idle"
         rules = self._all_rules()
         if not rules:
+            self._note_click("no rules")
             return "idle"
+        short = serial[-4:]
+        self._note_click(f"looking {short}")
         try:
             xml = self._dump_serial(serial)
         except Exception as exc:
             self._why_set(serial, "could not see the screen")
+            self._note_click(f"look failed {short}")
             log(f"{serial} look failed {exc}")
             return "idle"
         root = parse_hierarchy_xml(xml)
+        family = []
+        try:
+            family = list(self.device.identity(serial).get("family") or [])
+        except Exception:
+            family = []
         taps, seen = clicks_for_device(
-            self.tagger, rules, root, [], (), serial=serial, hold=None,
+            self.tagger, rules, root, family, (), serial=serial, hold=None,
         )
         pairs = list(zip(seen, taps))
         if not pairs:
+            self._note_click(f"no element {short}")
             return "idle"
         tag, (x, y) = pairs[0]
         if not any(self._year_on.values()):
@@ -507,8 +541,10 @@ class CompactController(ctk.CTk):
             self._tap_serial(serial, x, y)
         except Exception as exc:
             self._why_set(serial, "tap was not sent")
+            self._note_click(f"tap failed {short}")
             log(f"{serial} tap failed {exc}")
             return "miss"
+        self._note_click(f"tap {short} {int(x)} {int(y)}", tapped=True)
         if not getattr(self, "fast", False):
             time.sleep(0.2)
         if not any(self._year_on.values()):
@@ -1263,19 +1299,20 @@ class CompactController(ctk.CTk):
             "actions": [{"type": "click", "tag": name}],
         })
         raw = getattr(self.current_element, "_raw_bounds", None) or self.current_element.bounds
+        n = len(self._all_rules())
+        controllers = len(self._controllers)
         log(
-            f"ADD {name} {self.current_element.class_name} "
+            f"ADD {name} rules={n} {self.current_element.class_name} "
             f"id={self.current_element.resource_id or '-'} "
             f"text={self.current_element.text or '-'} "
             f"bounds={list(raw)}"
         )
-        n = len(self._controllers)
         if any(self._year_on.values()):
             for ctl in self._controllers.values():
                 ctl.poke()
-            self._show_overlay(f"Added {name} · {n} clicking")
+            self._show_overlay(f"Rule {n} · clicking {controllers}")
         else:
-            self._show_overlay(f"Added {name} · {n} controllers")
+            self._show_overlay(f"Rule {n} saved · press START")
 
     def _reset_rules(self):
         count = self.rules.clear()
@@ -1350,8 +1387,12 @@ class CompactController(ctk.CTk):
                 self.after_cancel(self._rules_job)
                 self._rules_job = None
             return
+        try:
+            self._sync_controllers()
+        except Exception:
+            pass
         self._show_overlay(f"Clicking {len(self._controllers)}")
-        log("START")
+        log(f"START controllers={len(self._controllers)} rules={len(self._all_rules())}")
         if self._rules_job is None:
             self._rules_tick()
 
@@ -1438,7 +1479,12 @@ class CompactController(ctk.CTk):
         return [rule for rule in rules if rule.get("enabled", True)]
 
     def _tap_serial(self, serial: str, x: int, y: int):
-        self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+        try:
+            self._adb_call(serial, ["shell", "input", "tap", str(int(x)), str(int(y))], timeout=5)
+        except Exception:
+            from core.panda import shell
+            if not shell(serial, f"input tap {int(x)} {int(y)}", timeout=4):
+                raise
         log(f"{serial} tap {int(x)} {int(y)}")
 
     def _adb_states(self):
