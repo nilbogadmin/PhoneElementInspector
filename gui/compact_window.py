@@ -518,7 +518,8 @@ class CompactController(ctk.CTk):
             xml = self._dump_serial(serial)
         except Exception as exc:
             self._why_set(serial, "could not see the screen")
-            self._note_click(f"look failed {short}")
+            reason = " ".join(str(exc).split())[:36] or "failed"
+            self._note_click(f"look failed {short} {reason}")
             log(f"{serial} look failed {exc}")
             return "idle"
         root = parse_hierarchy_xml(xml)
@@ -1574,15 +1575,41 @@ class CompactController(ctk.CTk):
         self._adb_refresh_busy = False
 
     def _dump_serial(self, serial: str) -> str:
-        self._adb_call(serial, ["shell", "uiautomator", "dump", "/data/local/tmp/pei.xml"], timeout=8)
-        data = self._adb_call(serial, ["exec-out", "cat", "/data/local/tmp/pei.xml"], timeout=5)
-        text = data.decode("utf-8", "replace")
-        start = text.find("<hierarchy")
-        if start < 0:
-            start = text.find("<?xml")
-        if start < 0:
-            raise RuntimeError("no hierarchy")
-        return text[start:]
+        """Read the screen. /data/local/tmp is not writable on these phones, and 8s is too short."""
+        import subprocess
+        if not hasattr(self, "_dump_slots"):
+            self._dump_slots = threading.Semaphore(4)
+        script = "uiautomator dump /sdcard/pei.xml >/sdcard/pei.err 2>&1; cat /sdcard/pei.xml /sdcard/pei.err"
+        last = "no hierarchy"
+        self._dump_slots.acquire()
+        try:
+            for _ in range(3):
+                try:
+                    data = self._adb_host(
+                        ["-s", serial, "shell", script],
+                        timeout=22,
+                    )
+                except subprocess.TimeoutExpired:
+                    last = "timeout"
+                    continue
+                except subprocess.CalledProcessError as exc:
+                    err = ((exc.output or b"") + b" " + (exc.stderr or b"")).decode("utf-8", "replace")
+                    line = err.strip().splitlines()[-1] if err.strip() else f"exit {exc.returncode}"
+                    last = " ".join(line.split())[:80]
+                    time.sleep(0.4)
+                    continue
+                text = data.decode("utf-8", "replace")
+                start = text.find("<hierarchy")
+                if start < 0:
+                    start = text.find("<?xml")
+                if start >= 0:
+                    return text[start:]
+                line = text.strip().splitlines()[-1] if text.strip() else "empty"
+                last = " ".join(line.split())[:80]
+                time.sleep(0.4)
+        finally:
+            self._dump_slots.release()
+        raise RuntimeError(last)
 
     def _rules_round_done(self, hits: int, count: int):
         self._rule_busy = False
