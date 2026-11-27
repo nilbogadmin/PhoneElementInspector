@@ -495,7 +495,7 @@ class CompactController(ctk.CTk):
             word = "clicking" if any(self._year_on.values()) else "idle"
             self.drag_zone.configure(text=f"{n} {word} · {taps} taps")
             if show:
-                self._show_overlay(text[:48])
+                self._show_overlay(text[:72])
 
         try:
             self.after(0, paint)
@@ -1574,39 +1574,71 @@ class CompactController(ctk.CTk):
             log(f"adb refresh failed {exc}")
         self._adb_refresh_busy = False
 
+    def _xml_from_dump(self, data: bytes) -> str:
+        text = data.decode("utf-8", "replace")
+        start = text.find("<hierarchy")
+        if start < 0:
+            start = text.find("<?xml")
+        if start < 0:
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            picked = next((ln for ln in lines if "ERROR" in ln or "Exception" in ln), lines[-1] if lines else "empty")
+            raise RuntimeError(" ".join(picked.split())[:80])
+        return text[start:]
+
     def _dump_serial(self, serial: str) -> str:
-        """Read the screen. /data/local/tmp is not writable on these phones, and 8s is too short."""
+        """Read the screen without /sdcard. That folder does not exist on these phones."""
         import subprocess
         if not hasattr(self, "_dump_slots"):
             self._dump_slots = threading.Semaphore(4)
-        script = "uiautomator dump /sdcard/pei.xml >/sdcard/pei.err 2>&1; cat /sdcard/pei.xml /sdcard/pei.err"
         last = "no hierarchy"
         self._dump_slots.acquire()
         try:
-            for _ in range(3):
+            tries = [
+                ["-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty"],
+                ["-s", serial, "shell", "uiautomator", "dump", "/data/local/tmp/pei.xml"],
+                ["-s", serial, "shell", "uiautomator", "dump", "/storage/emulated/0/pei.xml"],
+            ]
+            for args in tries:
                 try:
-                    data = self._adb_host(
-                        ["-s", serial, "shell", script],
-                        timeout=22,
-                    )
+                    data = self._adb_host(args, timeout=22)
                 except subprocess.TimeoutExpired:
                     last = "timeout"
                     continue
                 except subprocess.CalledProcessError as exc:
-                    err = ((exc.output or b"") + b" " + (exc.stderr or b"")).decode("utf-8", "replace")
-                    line = err.strip().splitlines()[-1] if err.strip() else f"exit {exc.returncode}"
-                    last = " ".join(line.split())[:80]
-                    time.sleep(0.4)
+                    blob = (exc.output or b"") + b"\n" + (exc.stderr or b"")
+                    try:
+                        return self._xml_from_dump(blob)
+                    except RuntimeError as err:
+                        last = str(err)
                     continue
-                text = data.decode("utf-8", "replace")
-                start = text.find("<hierarchy")
-                if start < 0:
-                    start = text.find("<?xml")
-                if start >= 0:
-                    return text[start:]
-                line = text.strip().splitlines()[-1] if text.strip() else "empty"
-                last = " ".join(line.split())[:80]
-                time.sleep(0.4)
+                path = args[-1]
+                if path != "/dev/tty":
+                    try:
+                        note = data.decode("utf-8", "replace")
+                    except Exception:
+                        note = ""
+                    if "ERROR" in note or "Exception" in note:
+                        last = " ".join(note.split())[:80]
+                        continue
+                    try:
+                        data = self._adb_host(["-s", serial, "exec-out", "cat", path], timeout=8)
+                    except subprocess.CalledProcessError as exc:
+                        last = " ".join(((exc.stderr or exc.output or b"dump failed").decode("utf-8", "replace")).split())[:80]
+                        continue
+                    except subprocess.TimeoutExpired:
+                        last = "timeout"
+                        continue
+                try:
+                    return self._xml_from_dump(data)
+                except RuntimeError as err:
+                    last = str(err)
+            if serial and serial == getattr(self.device, "serial", "") and getattr(self.device, "device", None):
+                try:
+                    xml = self.device._dump_xml()
+                    if xml:
+                        return self._xml_from_dump(xml.encode("utf-8"))
+                except Exception as exc:
+                    last = " ".join(str(exc).split())[:80] or last
         finally:
             self._dump_slots.release()
         raise RuntimeError(last)
