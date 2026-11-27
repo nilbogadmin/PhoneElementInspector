@@ -485,7 +485,8 @@ class CompactController(ctk.CTk):
         if tapped:
             self._taps_sent = getattr(self, "_taps_sent", 0) + 1
         now = time.monotonic()
-        show = tapped or now - getattr(self, "_click_note_at", 0) > 0.8
+        quiet = text.startswith("looking") or text.startswith("no element")
+        show = (not quiet) and (tapped or now - getattr(self, "_click_note_at", 0) > 0.8)
         if show:
             self._click_note_at = now
 
@@ -507,6 +508,8 @@ class CompactController(ctk.CTk):
         from core.hierarchy import parse_hierarchy_xml
         from core.match import clicks_for_device
         if not any(self._year_on.values()):
+            return "idle"
+        if serial and serial == (getattr(self.device, "serial", "") or ""):
             return "idle"
         rules = self._all_rules()
         if not rules:
@@ -985,7 +988,6 @@ class CompactController(ctk.CTk):
             and not self.device.demo_mode
             and not self._hier_busy
             and not self._pause_hier
-            and not self._year_on.get(self._active_year)
             and self.device.device is not None
         ):
             self._hier_busy = True
@@ -1088,6 +1090,8 @@ class CompactController(ctk.CTk):
         """The click path that selected elements: screen position to the picture."""
         def press(event):
             widget = getattr(event, "widget", None)
+            if widget is self.overlay:
+                return
             buttons = self._guard_widgets()
             if widget is not None and any(self._owned_by(widget, btn) for btn in buttons):
                 return
